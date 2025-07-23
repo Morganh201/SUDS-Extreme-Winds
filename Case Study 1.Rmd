@@ -1,0 +1,299 @@
+---
+title: "Extreme Value Case Study 1"
+output: pdf_document
+date: "2025-06-19"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+In this case study we shall use different techniques in analyzing extreme values in a certain dataset using the library extRemes. In this section we will explore block maxima and threshold models and perform standard statistical procedures.
+
+```{r}
+library(extRemes)
+```
+
+## Chapter 3: Block-maxima approach
+Plot time series of the maximum winter temperature from 1927 to 1995 at Port Jarvis, New York. The maximum winter temperature is given by the column TMX1
+```{r}
+data("PORTw", package="extRemes")
+plot(PORTw$TMX1, type = "l", col = "darkblue", lwd = 1.5, 
+     cex.lab = 1.25, xlab = "Year", ylab = "Maximum winter temperature")
+```
+
+Since we are taking the annual maximum(there is only one winter season in a year), we are using the block maxima approach, where each block is one year. We can change the length of the blocks to be any arbitrary length which will be subject to the bias-variance tradeoff, but heuristically we always take the block size to be one year.
+```{r}
+fit1 = fevd(TMX1, PORTw, units="deg C")
+distill(fit1)
+```
+
+The output consists of the parameters of the GEV distribution of the location $\mu$, the scale $\sigma$, and the shape $\xi$, that we have just fitted, as well as its negative log likelihood and the variance covariance matrix of these parameters. 'location.location' refers to the variance of the $\mu$ parameter, while 'scale.location' refers to the covariance of $\mu$ and $\sigma$.
+
+We plot model diagnostics now to examine the fit of our GEV distribution:
+```{r}
+plot(fit1)
+```
+
+We have here 4 different plots for model diagnostics: From top left to bottom right, the first is the QQ-plot, then we have the probability plot fitted with a regression line and confidence intervals, the density plot of the theoretical model and its empirical distribution, and the return level plot.
+```{r, warning=FALSE}
+plot(fit1, "trace")
+```
+
+Here we have the plotted likelihood functions of each of the 3 parameters as well as its gradient functions.
+
+```{r}
+return.level(fit1, do.ci=TRUE)
+```
+
+To interpret the return levels, we say that we are 95 percent confident that the winter temperature at Port Jarvis is expected to exceed 15.38 degrees Celsius in 2 years. We can also say that there is a 50 percent probability that Port Jarvis will exceed winter temperatures of 16.18 degrees at any given year. In general, the probability is given by $\frac{1}{k}$, where $k$ is the number of years in the return level. 
+
+We can also output the confidence intervals of the parameters
+```{r}
+ci(fit1, type='parameter')
+```
+
+Since the CI for the shape parameter $\xi$ does not include 0, we have strong evidence that the data cannot be used to fit a Gumbell distribution, which corresponds to a GEV distribution with shape parameter $\xi = 0$. We can further justify this using a simple likelihood ratio test:
+```{r}
+fit0 = fevd(TMX1, PORTw, type = "Gumbel", units="deg C")
+lr.test(fit0, fit1)
+```
+
+With a significance level of $\alpha=0.05$, we reject the null hypothesis that the Gumbell distribution provides a good fit for the data. We can use profile likelihood estimates to provide more accurate estimates and CI of the parameters since it will not rely on the MLE constraints, that the parameters must be normally distributed.
+```{r}
+ci(fit1, type = "parameter", which.par = 3, xrange = c(-0.4, 0.01), 
+   nint = 100, method = "proflik", verbose = TRUE)
+```
+
+This is the confidence interval of the shape parameter. Even with profile likelihood, the evidence against a Gumbel distribution is strong. We can also estimate the confidence interval of the 100 year return level using profile likelihoods:
+```{r}
+ci(fit1, method = "proflik", xrange = c(22, 28), verbose = TRUE)
+```
+
+We can calculate the probability of exceeding any values in a given year using the following code. Note that with the Weibull distribution, with shape $\xi < 0$, we get an upper bound on the distribution. Thus, we can see that the probability of getting a winter temperature greater than 28.9 is 0, since the upper bound is 28.83.
+```{r}
+pextRemes(fit1, q = c(20, 25, 28.8, 28.9), lower.tail = FALSE)
+```
+
+We can also simulate data from a GEV distribution:
+```{r}
+z = rextRemes(fit1, 100)
+fitz = fevd(z)
+plot(z, type='l')
+```
+
+## Chapter 4: Threshold Models
+
+We use hurricane damage data in this example:
+```{r}
+data("damage", package='extRemes')
+par(mfrow=c(2, 2))
+plot(damage$Year, damage$Dam, xlab = 'Year', ylab = "U.S. Hurricane Damage (billion USD)", 
+     cex = 1.25, col = "darkblue", bg = "lightblue", pch = 21)
+plot(damage[, "Year"], log(damage[, "Dam"]), xlab = "Year", ylab = "ln(Damage)", 
+     ylim = c(-10, 5), cex.lab = 1.25, col = "darkblue", bg = "lightblue", pch = 21)
+qqnorm(log(damage[, "Dam"]), ylim = c(-10, 5), cex.lab = 1.25)
+```
+
+We can see that the damage done by hurricanes is approximately log-normally distributed, due to the qq plot of the logarithm of the target variable being linear with respect to the quantiles of the normal distribution.
+
+An important part in fitting the data into a generalized Pareto distribution is choosing a threshold so that we can classify points greater than that threshold to be an extreme value. We plot the fitted shape and scale parameters with its standard errors with respect to the threshold value $u$ as well as the mean residual life plot:
+```{r}
+threshrange.plot(damage$Dam, r = c(1, 15), nint=20)
+mrlplot(damage$Dam, xlim=c(0, 12))
+```
+
+There are two ways to choose a suitable threshold from these graphs. The first way is to use the graphs that show the relationship between threshold $u$ and the reparametrized scale $\sigma^*$ and shape parameter $\xi$. Theoretically, these parameters should be constant under $u$, thus we should choose a threshold $u$ that is relatively constant. 6(billion USD) seems like a good choice.
+
+To interpret the last graph, using mathematical proofs we typically choose the value in which the graph starts to be approximately a straight line. The value of 6(billion USD) seems like a good choice. A good choice of threshold $u$ is important in balancing the bias-variance tradeoff, and since we want to get the most data as possible whilst holding true the assumptions of the limiting results of the threshold models, we make this heuristic choice for our threshold.
+
+When calculating the return value, since we are not calculating in blocks of a certain length, we are calculating the $m$-observation return level instead of a return level in years. To instead return an annual return level, we need to calculate the number of observations in a year in the dataset. Since the data has an inconsistant number of observations in every year, we instead calculate the average number of observations per year(in some years there are no hurricanes at all). That number here turns out to be 2.06 per year.
+```{r}
+fitD = fevd(Dam, damage, threshold=6, type="GP", time.units="2.06/year")
+plot(fitD)
+```
+
+We calculate the probabilities of exceeding the amount of damage done by a hurricane in any arbitrary year:
+```{r}
+pextRemes(fitD, c(20, 40, 60, 100), lower.tail=FALSE)
+```
+
+There was a large hurricane in Miami in 1926, which resulted in the damage of 60 million USD, a huge outlier in the dataset. We can see the effects of this in the model fitting, where our model severely underestimates the probability of obtaining that level of damage, which is shown in all of our model diagnostic graphs. Thus, we may need an alternative distribution; one with heavier tails. 
+
+## Chapter 5: Dependent Sequences
+
+The limiting results used so far have implement assumptions that the data is independently distributed. However, in reality that is far from the case, as there are many physical processes that have some sort of dependence over time. Fortunately, we only have to modify the result slightly in dependent sequences as long as the dependency fades away with time, which is often the case. We can graph the dependence over time as follows:
+```{r}
+data("Tphap", package='extRemes')
+atdf(-Tphap$MinT, 0.99)
+```
+
+We only model the dependence of extreme values, values which exceed the 99th percentile, since the limiting result only cares about the dependence of extreme values and not nominal values. We can see that the autocorrelation for lags 1, 2, and 3 are relatively large. An alternative in estimating the strength of tail dependence is to calculate the extremal index, which represents roughly the reciprocal of the average cluster size of extreme events. 
+```{r}
+extremalindex(-Tphap$MinT, -68 - 7 * (Tphap$Year - 48) / 42)
+```
+
+We see that the extremal index $\theta$ is equal to roughly 0.4, indicating that there is a level of dependence of extreme values, with a cluster size of around an average of between 2 and 3. Extremal indexes are estimated by calculating the ratio between the number of extremal clusters above the threshold $u$, which in this case is a linear function of Year, and the number of observations exceeding that threshold. In addition, we see that there are roughly 60 clusters with an estimated run length of around $r = 5$, meaning that we consider a group of extremal values as a cluster if it is separated by $r=5$ number of points that do not exceed the threshold.
+
+Now that we showed that there is evidence for temporal dependency, we must now deal with it as we do not want dependent data points fitted into our likelihood function. One way to do this is to use declustering methods, which chooses a representative point in a cluster to be fitted into the model, instead of all threshold excesses, as follows:
+```{r}
+# Because the data only considers summer months, we do not want excesses from different years to be in one cluster; we want them separated. We use the groups method to deal with this issue
+grp = Tphap$Year - 47
+look = decluster(-Tphap$MinT, -68 - 7 * (Tphap$Year - 48) / 42, groups = grp, r = 1)
+look
+```
+
+By default, we have a run length of $r = 1$, however we do get a better estimate if we use the estimated run length of $r=5$. We can see that the extremal index after running runs declustering is much better than before, even with only $r=1$, as we now have $\theta_{old} = 0.4 < \theta_{new} = 0.78$
+```{r}
+plot(look)
+```
+
+From the plot above, we see the negatively descending linear threshold we implemented. The greyed out points refer to points that have been set as the threshold value so that it will not be involved in the modeling process. The blue lines refer to the groups of clusters that have been made with respect to the runs length.
+
+We run the new auto-tail dependence plot to see the effects of declustering:
+```{r}
+atdf(look, 0.99)
+```
+
+We see that the above plot looks a lot better than before, with almost 0 temporal dependency between points. To use this newly filtered dataset into our likelihood fitting process, we can input the decluster object directly into the fitting function:
+```{r}
+u = (Tphap$Year - 48) / 42
+u = -68 - 7*u
+fitDC <- fevd(y, data = data.frame(y = c(look), time = 1:2666), threshold = u, 
+              location.fun = ~ time, type = "PP", time.units = "62/year")
+plot(fitDC)
+```
+
+## Chapter 6: Non-Stationarity
+
+Another practical problem in modelling extreme values is the notion of non-stationarity. We can see that in many real-world applications, the data is not distributed equally across time due to external factors such as climate change. Therefore, we want to include into the model information on these external factors to increase model accuracy. 
+
+In many scenarios, we can simply introduce more parameters into our existing parameters. For example, if we hypothesis that there is a linear time trend in our extreme values, then we can rewrite our parameters $\mu$, $\sigma$, and $\xi$ to have linear regression parameters(ex. $\mu(t) = \beta_0 + \beta_1 t$). We can also use quadratic terms, or even include other covariates, as long as they satisfy the following generalization:
+$$\theta(t) = h(X^T\beta)$$
+for any parameter $\theta$, function $h$, $X$ the model vector, and $\beta$ a vector of parameters. Note that for the scale parameter it must always be positive, for all $t$. Thus, a common choice for function $h$ is the exponential function, where $\sigma(t) = \exp(\beta_0 + \beta_1 t)$. For threshold models, we can also define the threshold $u$ using linear, quadratic, or seasonal terms, however a main disadvantage is that the other parameters $\sigma$ and $\xi$ rely on threshold $u$. Therefore, it can be difficult in finding a suitable threshold since each threshold will give different parameter estimates when finding the MLE, thus blurring the very simple bias-variance tradeoff problem. We will discuss remedies in Chapter 7. 
+
+We give an example of fitting non-stationary sequences using the location parameter $\mu$:
+```{r, warning=FALSE}
+fit2 = fevd(TMX1, PORTw, location.fun = ~AOindex, units = 'deg C')
+plot(fit2)
+ci(fit2, type='parameter')
+plot(fit2, "trace")
+```
+
+In PP and QQ plots, we make comparisons by first transforming the data into a stationary sequence. For block maxima approaches, it is common to transform into a standard Gumbel distribution. For threshold models, we transform it into a standard exponential. In addition, in the return plots, we see that we are modelling return values based on the 'effective' return levels, meaning that for some covariate value of AOindex, we calculate the return level at that fixed value. We can check specific return levels for specific covariate values as follows:
+
+```{r}
+v = make.qcov(fit2, vals = list(mu1 = c(-1, 1)))
+return.level(fit2, return.period = c(2, 20, 100), qcov=v)
+```
+
+By specifying AOindex = -1 and 1, we can see that for the 2-year return period, its value is equal to 15.05 and 17.35. We can compare the effective return levels based on different values of AOindex with their confidence intervals:
+```{r}
+v1 = make.qcov(fit2, vals = list(mu1 = 1))
+vneg1 = make.qcov(fit2, vals = list(mu1 = -1))
+return.level(fit2, return.period = 20, do.ci=TRUE, qcov = v1, qcov.base = vneg1)
+```
+
+We see that the estimated difference between the two effective return levels is 2.3, with a 95% confidence interval of (1.06, 3.55). Since 0 is not in the interval, we can say that the 20 year return period is significantly different for different AOindexes. We can also test to see if the inclusion of non-stationarity provides a better fit than a stationary model, using likelihood ratio tests:
+```{r}
+fit1 = fevd(TMX1, PORTw, units = 'deg C')
+lr.test(fit1, fit2)
+```
+
+With a very small p-value, we can reject the null hypothesis and say that the stationary assumption does not hold well in model fitting. We can also include covariates for the scale parameter. We can make sure that the scale parameter uses the exponential function to always have its value positive by using the argument "use.phi = TRUE":
+```{r}
+fit3 <- fevd(TMX1, PORTw, location.fun = ~ AOindex, scale.fun = ~ AOindex, 
+             use.phi = TRUE, units = "deg C")
+plot(fit3)
+lr.test(fit3, fit2)
+```
+
+With a p-value of 0.63, it follows that there is no significant evidence that an exponential term with linear coefficients in the scale parameter will help improve model performance. Since likelihood ratio tests only work for nested models, we can also use the AIC and BIC metrics to find suitable models. 
+
+We can also implement non-stationarity in threshold models. Moreover, if there is yearly seasonality, we can define the following function for the scale parameter:
+$$\sigma(t) = \exp(\phi_0 + \phi_1\cos(2\pi \cdot t / 365.25) + \phi_2\sin(2\pi \cdot t / 365.25))$$
+We graph the data to showcase the seasonality:
+```{r}
+library(dplyr)
+data("Fort", package = "extRemes")
+temp = Fort %>% filter(year %in% c(1900:1901)) 
+plot(temp$Prec, type='l')
+```
+
+We now model the seasonality:
+```{r}
+fitFC = fevd(Prec, Fort, threshold = 0.395, type="GP")
+fitFC2 = fevd(Prec, Fort, threshold = 0.395, 
+              scale.fun = ~ cos(2 * pi * tobs / 365.25) + sin(2 * pi * tobs / 365.25), 
+              type = "GP", use.phi = TRUE, units = "inches")
+lr.test(fitFC, fitFC2)
+```
+
+We see that the harmonic seasonality function in the scale parameter does provide a significantly better fit than the stationary model. Now, suppose that we want to calculate the probability of exceeding a certain value, now that we have a working model. Note that this is different from calculating probabilities when the model assumes stationarity, since probabilities would be different with respect to its season. We must incorporate the harmonic variability into our calculation:
+```{r}
+v = matrix(1, 365, 5)
+v[, 2] = cos(2 * pi * rep(1:365 / 365.25))
+v[, 3] = sin(2 * pi * rep(1:365 / 365.25))
+v[, 5] = 0.395
+v = make.qcov(fitFC2, vals = v, nr = 365)
+FCprobs = pextRemes(fitFC2, q = c(rep(1.54, 365)), qcov=v, lower.tail = FALSE)
+plot(FCprobs)
+```
+
+This calculation allows us to calculate probabilities based on a given day that we exceed a value of 1.54, since each day represents a different scale parameter. We see that in the middle of the year, it is more likely for precipitation to exceed 1.54 than any other day of the year.
+
+## Chapter 7: Point Process
+
+We can approach the problem of fitting extreme values by fitting the frequency that data points are above a certain threshold using a Poisson distribution. This is known as the point process approach, and we can estimate the frequency by estimating its intensity measure, which can be proven to be dependent on the GEV parameters. 
+```{r, warning=FALSE}
+fit = fevd(Prec, Fort, threshold = 0.395, type="PP", units = 'inches', verbose = TRUE)
+plot(fit)
+plot(fit, "trace")
+ci(fit, type = "parameter")
+```
+
+The Z plot that has been plotted shows the graph of the standard exponential quantiles against $Z_k$, which are the empirical estimates of the waiting times from one extreme to another extreme. If the modelled distribution is representative of the data, then $Z_k$ can be shown to be standard exponentially distributed, but we can clearly see that the model does not perform well. Notice that if we assume non-stationarity in our parameters, then the output will not show a density plot.
+
+Calculating return levels and its confidence interval for non-stationary processes is difficult since the delta method cannot be used. Thus, we use the normality assumption of MLE for parameters $\mu(t), \sigma(t), \xi(t)$, for all $t$, and sample values from that distribution. Then we calculate the return value for each sample, giving us an approximate distribution for $z^*_{m, t}$, for every $t$, and find its confidence interval.
+```{r}
+fitFCpp = fevd(Prec, Fort, threshold = 0.395, 
+               location.fun = ~ cos(2 * pi * tobs / 365.25) + sin(2 * pi * tobs / 365.25), 
+               scale.fun = ~ cos(2 * pi * tobs / 365.25) + sin(2 * pi * tobs / 365.25), 
+               type = "PP", use.phi = TRUE, units = "inches")
+v = make.qcov(fitFCpp, vals = list(mu1 = cos(2 * pi * 1:365 / 365.25), 
+                                   mu2 = sin(2 * pi * 1:365 / 365.25), 
+                                   phi1 = cos(2 * pi * 1:365 / 365.25), 
+                                   phi2 = sin(2 * pi * 1:365/365.25)))
+plot(fitFCpp, type="Zplot")
+p1.54 = pextRemes(fitFCpp, rep(1.54, 365), lower.tail=FALSE, qcov = v)
+plot(p1.54, type='l')
+ciEffRL100 = ci(fitFCpp, return.period = 100, qcov = v)
+```
+
+We can plot these confidence intervals with respect to the data:
+```{r}
+plot(Fort$tobs, Fort$Prec, ylim = c(0, 10), xlab = "day", 
+     ylab = "Fort Collins Precipitation (inches)")
+lines(ciEffRL100[, 1], lty = 2, col = "darkblue", lwd = 1.25)
+lines(ciEffRL100[, 2], col = "darkblue", lwd = 1.25)
+lines(ciEffRL100[, 3], lty = 2, col = "darkblue", lwd = 1.25)
+legend("topleft", legend = c("Effective 100-year return level", "95% CI (normal approx)"), 
+       col = "darkblue", lty = c(1, 2), lwd = 1.25, bty = "n")
+```
+
+```{r}
+fitBayes = fevd(Prec, Fort, threshold = 2, location.fun = ~cos(2 * day / 365.25), type = "PP",
+                method = "Bayesian", verbose = TRUE)
+```
+
+
+
+
+
+
+
+
+
+
+
+

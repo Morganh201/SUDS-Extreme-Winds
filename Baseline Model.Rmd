@@ -1,0 +1,452 @@
+---
+title: "Baseline Model"
+output: pdf_document
+date: "2025-07-15"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(extRemes)
+library(dplyr)
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+library(MASS)
+library(evdbayes)
+library(mev)
+library(boot)
+library(tibble)
+```
+
+```{r}
+wind_speed = read.csv("pearson_wind_speed.csv")
+wind_speed$valid_time = as.Date(wind_speed$valid_time, format = "%Y-%m-%d")
+wind_speed$Year = year(wind_speed$valid_time)
+wind_speed$Month = month(wind_speed$valid_time)
+```
+
+Plan: 
+Step 1: Plot basic yearly climatology of wind extremes
+
+```{r}
+wind_speed = wind_speed %>% mutate(day_of_year = yday(valid_time))
+yearly_mean_climatology = wind_speed %>% group_by(day_of_year) %>% summarise(mean_wind_speed = mean(wind_speed))
+ggplot(yearly_mean_climatology, aes(x = day_of_year, y = mean_wind_speed)) +
+  geom_line(color = "blue") +
+
+  # Add vertical lines for different seasons
+  geom_vline(xintercept = c(60, 151, 244, 335),  # MAM, JJA, SON, DJF
+             linetype = "dashed", color = "red") +
+  
+  # Add labels (optional)
+  annotate("text", x = 60, y = max(yearly_mean_climatology$mean_wind_speed), label = "MAM", angle = 90, vjust = -0.5) +
+  annotate("text", x = 152, y = max(yearly_mean_climatology$mean_wind_speed), label = "JJA", angle = 90, vjust = -0.5) +
+  annotate("text", x = 244, y = max(yearly_mean_climatology$mean_wind_speed), label = "SON", angle = 90, vjust = -0.5) +
+  annotate("text", x = 335, y = max(yearly_mean_climatology$mean_wind_speed), label = "DJF", angle = 90, vjust = -0.5) +
+
+  labs(title = "Yearly Mean Climatology of Wind Speeds",
+       x = "Day of Year",
+       y = "Mean Wind Speed (m/s)") +
+  theme_minimal()
+```
+
+```{r}
+ggplot(wind_speed, aes(x = day_of_year, y = wind_speed)) + 
+  geom_point(alpha = 0.1) +
+  geom_smooth(method = "loess", span = 0.1, color = "blue", size = 1, fill = "lightblue", se = TRUE) +
+  labs(title = "LOWESS Smoothing by Day of Year",
+       x = "Day of Year",
+       y = "Wind Speed") + 
+  theme_minimal() + 
+  theme(axis.text.x = element_blank())
+```
+
+Plot maximum yearly climatology
+```{r}
+yearly_max_climatology = wind_speed %>% group_by(day_of_year) %>% summarise(max_wind_speed = max(wind_speed))
+ggplot(yearly_max_climatology, aes(x = day_of_year, y = max_wind_speed)) +
+  geom_line(color = "blue") +
+
+  # Add vertical lines for different seasons
+  geom_vline(xintercept = c(60, 151, 244, 335),  # MAM, JJA, SON, DJF
+             linetype = "dashed", color = "red") +
+  
+  # Add labels (optional)
+  annotate("text", x = 60, y = max(yearly_max_climatology$max_wind_speed), label = "MAM", angle = 90, vjust = -0.5) +
+  annotate("text", x = 152, y = max(yearly_max_climatology$max_wind_speed), label = "JJA", angle = 90, vjust = -0.5) +
+  annotate("text", x = 244, y = max(yearly_max_climatology$max_wind_speed), label = "SON", angle = 90, vjust = -0.5) +
+  annotate("text", x = 335, y = max(yearly_max_climatology$max_wind_speed), label = "DJF", angle = 90, vjust = -0.5) +
+
+  labs(title = "Yearly Maximum Climatology of Wind Speeds",
+       x = "Day of Year",
+       y = "Mean Wind Speed (m/s)") +
+  theme_minimal()
+```
+
+We can see that the mean wind speed in the winter are greatest in the year. However, when looking at extreme winds we see that spring winds are the most extreme of all seasons. We will explore more of the seasonality in extreme winds later on in this analysis.
+
+Assuming that the wind speed data is stationary across all 40 years, we find the distribution of the wind speeds:
+```{r}
+hist(wind_speed$wind_speed, freq=FALSE, breaks = 30)
+lines(density(wind_speed$wind_speed), col='red', lwd = 2)
+```
+
+Usually, wind speeds are modelled using the Weibull distribution. Thus, we try to fit the wind speeds in this paremetric family, and check its model fit using a QQ-plot.
+```{r, warning=FALSE}
+weibull_fit = fitdistr(wind_speed$wind_speed, "weibull")
+weibull_fit
+```
+
+```{r}
+# Sort the data
+data_sorted <- sort(wind_speed$wind_speed)
+
+# Compute theoretical quantiles from the Weibull distribution
+n <- length(data_sorted)
+p <- (1:n - 0.5) / n  # Probability points
+
+# Specify shape and scale parameters for the theoretical Weibull distribution
+shape_param <- 2.272
+scale_param <- 5.192
+
+# Weibull theoretical quantiles
+theoretical_quantiles <- qweibull(p, shape = shape_param, scale = scale_param)
+
+# Create the QQ plot
+plot(theoretical_quantiles, data_sorted,
+     main = "QQ Plot vs Weibull Distribution",
+     xlab = "Theoretical Quantiles (Weibull)",
+     ylab = "Sample Quantiles",
+     pch = 19, col = "darkblue")
+
+# Add a reference line
+abline(0, 1, col = "red", lty = 2)
+```
+
+Notice that the tails of the distribution are not accurately represented by the weibull distribution, as we see that the data is slightly right skewed from the Weibull distribution, and exhibits heavy right tails. We can check if this difference in the tail behaviour is caused by climate change signals, by splitting the data into previous and current decades.
+```{r}
+extreme_winds = wind_speed %>% mutate(Period = case_when(Year < 2000 ~ "1979-1999",
+                                                Year >= 2000 ~ "2000-2020")) %>% 
+  filter(wind_speed > 11)
+counts = extreme_winds %>% group_by(Period) %>% summarise(count = n())
+
+# Plot frequencies of extreme wind speeds per year
+wind_freq = extreme_winds %>% count(Year)
+ggplot(wind_freq, aes(x = factor(Year), y = n)) +
+  geom_bar(stat = "identity", fill = "firebrick", color = "black") +
+  labs(title = "Extreme Wind Speeds Over Time",
+       x = "Year",
+       y = "Count of Extreme Wind Speeds") +
+  theme_minimal() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5))
+
+# Plot boxplots
+ggplot(extreme_winds, aes(x = Period, y = wind_speed, fill = Period)) + geom_boxplot() +
+  geom_text(data = counts, aes(x = Period, y = min(extreme_winds$wind_speed) - 0.25, 
+                             label = paste("n =", count)),
+            inherit.aes = FALSE, color = "black", size = 4) +
+  labs(title = "Wind Speed Boxplots",
+       x = "Time Period",
+       y = "Wind Speed (m/s)") +
+  theme_minimal()
+
+# Plot data points of extreme winds
+ggplot(extreme_winds, aes(x = Year, y = wind_speed)) + geom_point() +
+  labs(title = "Scatterplot of Extreme Winds",
+       x = "Year",
+       y = "Wind Speed (m/s)") +
+  theme_minimal()
+
+# Plot overlapping density curves
+ggplot(extreme_winds, aes(x = wind_speed, fill = Period)) +
+  geom_density(alpha = 0.5) +
+  labs(title = "Overlapping Density Plot of Wind Speeds by Period",
+       x = "Wind Speed",
+       y = "Density",
+       fill = "Period") +
+  theme_minimal()
+```
+
+From the boxplots, it seems like there is a slight increase in the number of extreme wind speeds. However, if we look at the scatter plot there seems to not have much difference in extreme wind data points. We do see a slight increase in frequency Of wind speeds, however. There also seems to be a difference in distributions of extreme wind speeds, where the period of 2000-2020 seems to have heavier tails than the period of 1979-1999. This, however, can only be attributed to the slight increase in frequency of extreme winds in the latter period, with 4 extra extreme values from a pretty small sample of $n=37$. This can be quantitatively shown in the Mann-Whitney U test, which tests if both datasets follow the same distribution. It is a non-parametric, robust, and resistant test, which is important since we are working with extremes(outliers), and the data is not normally distributed:
+```{r}
+# Test for climate change signal Mann-Whitney U Test
+previous = extreme_winds %>% filter(Period == "1979-1999")
+current = extreme_winds %>% filter(Period == "2000-2020")
+wilcox.test(previous$wind_speed, current$wind_speed, 
+            alternative = "two.sided",
+            paired = FALSE,
+            exact = TRUE)
+```
+
+With a p-value of almost 1, we do not have enough evidence to reject the null hypothesis, that wind speeds of both periods follow the same distribution. Thus, there seems to be no increasing trend in extreme winds over the years, at least for this dataset. In addition, climate change signals may take a while to have a significant effect on extremities, and if we include 2020-2025, then the results might be different. We will possibly need more data from different variables to provide decisive conclusions as why wind speeds exhibit heavier tails than a regular Weibull distribution.
+
+In the meantime, most meteorological variables have heavier tails than usual. Many applications and case studies thus rely on mixture distributions to model such variables. A way to create a mixture distribution in this case is to split the data into two, where one represents the extreme values, and fit a separate distribution for the extreme values. This calls for extreme value theory, where there are nice limiting results which allow us to model extreme values in one parametric family, regardless of the variable in question. The only difficulties are satisfying the assumptions that come with fitting such distributions.
+
+Step 2: Fit a baseline threshold model of 98th percentile extreme winds and do model diagnostics and return level inference
+```{r}
+threshold = quantile(wind_speed$wind_speed, probs = 0.98)
+fit = fevd(wind_speed, wind_speed, threshold = threshold, type = "GP")
+plot(fit)
+plot(fit, "trace")
+return.level(fit, return.period = c(2, 20, 50, 100, 500), do.ci=TRUE)
+ci(fit, type="return.level", method="proflik", return.period = 500, xrange = c(15, 24), verbose = TRUE)
+```
+
+Note that the profile likelihood provides greater accuracy in return levels since it does not rely on normality assumptions. The MLE estimates for parameters is assumed to be normally distributed, but since confidence intervals may not be symmetric, it is better to use the deviance statistic in calculating return level estimates to allow for skewed confidence intervals.
+
+The choice of threshold here as the 98th percentile was an arbitrary choice motivated by previous research studies. In theory, choosing a threshold amounts to a bias-variance tradeoff problem. If the threshold choice is too low, then the model will contain more bias since we may violate the extreme value assumptions. If the threshold choice is too high, then the model will have more variance due to the lack of data. There are two ways of choosing a suitable threshold. 
+
+Firstly, we can plot a mean residual life plot, where we plot different levels of threshold $u$ against the empirical average of the excesses at threshold $u$. It can be shown mathematically, that if model assumptions are correct, then the empirical average should be a linear function of $u$. Thus, to incorporate as much data as possible to reduce variance, we choose the lowest value of $u$ such that the graph is approximately linear, which minimizes bias.
+
+An alternative way to choose a threshold is to plot the threshold value $u$ against the parameter values $\sigma^*$ and $\xi$, where $\sigma^* = \sigma_u + \xi u$ has been reparametrized. It can be shown that if model assumptions are true, then $\sigma^*$ and $\xi$ must be roughly constant with respect to $u$, thus we choose the lowest threshold value such that this condition holds.
+```{r, warning=FALSE}
+threshrange.plot(wind_speed$wind_speed, r = c(3, 12), nint = 25)
+mrlplot(wind_speed$wind_speed, xlim=c(3, 12))
+```
+
+From the plots above, a suitable threshold would be around 8.5, which is lower than the 98th percentile winds. We may be able to get a better fit since we will get more data into the model:
+```{r}
+fit1 = fevd(wind_speed, wind_speed, threshold = 8.5, type = "GP")
+plot(fit1)
+plot(fit1, "trace")
+return.level(fit1, return.period = c(2, 20, 50, 100, 500), do.ci=TRUE)
+ci(fit1, type="return.level", method="proflik", return.period = 500, xrange = c(15, 21), verbose = TRUE)
+```
+From our second qq plot, which is a function of the empirical quantiles with the quantiles of simulated data from the fitted model, we see that we get a better fit of wind speed. More importantly, however, we get a more precise confidence interval for our return values, since we have more data. 
+
+To improve our model fit, which still tends to overestimate the extreme values, we can check for the validity of model assumptions. For peaks over threshold excesses, it follows that if the data is independent and identically distributed, then the distribution of the excesses is guaranteed to converge to a Generalized Pareto distribution, regardless of the distribution of the entire data. The first model assumption check we make is independence. In other words, is there time-dependencies between wind extremes? Is it likely to have a wind extreme event that lasts for multiple consecutive dates?
+
+It follows that the assumptions can be relaxed, where we can have long-term independence, meaning that a data point at time $t+l$ does not depend on data point at time $t$, for large $l$. Therefore, we only need to check for auto-dependence(auto-correlation) for a couple of lags. Since we are only fitting peaks over threshold points, we only need to check for dependencies for those points above the 98th percentile:
+```{r}
+emp_cdf = ecdf(wind_speed$wind_speed)
+cdf_value = emp_cdf(8.5)
+atdf(wind_speed$wind_speed, cdf_value)
+```
+
+As shown from above, there is little correlation with the data and its first lagged observations, with $\rho = 0.2$, and negligible correlation with its other lags. This suggests that extreme values of wind speeds are not likely to be clustered together, and that asymptotic independence may be a reasonable assumption. We can check further on how much extreme values are likely to be clustered using the extremal index, where the extremal index is equal to the reciprocal of the average cluster size. 
+```{r}
+threshold1 = 8.5
+extremalindex(wind_speed$wind_speed, threshold1)
+```
+
+With $\theta = 0.52$, the extremal index is shown to be modestly large, with an average cluster size of less than 2. Moreover, we estimate that there are 365 clusters with a run length of 7, meaning that a group of extreme values is considered a cluster if it is separated by at least $r=7$ threshold deficits. To fix the issue of temporal dependencies in extreme values, we can use a declustering algorithm to choose a representative point for each cluster to be fitted into the model.
+```{r}
+look = decluster(wind_speed$wind_speed, threshold1, r=7)
+look
+plot(wind_speed$wind_speed[2000:2200], type='o')
+abline(h = threshold1, col = 'blue')
+plot(look[2000:2200], type='o')
+abline(h = threshold1, col = 'blue')
+plot(look, which.plot = c("atdf"), qu=cdf_value)
+```
+
+After declustering, where we assign a representative point to every cluster and the rest of the cluster gets projected to the threshold value, we get an extremal index of 1, which implies that there are no cluster of extreme points above the threshold, and we can assume that the data has no short term temporal dependencies. We now fit the declustered data into a GP distribution:
+```{r}
+fit2 = fevd(y, data = data.frame(y = c(look), time=wind_speed$valid_time), threshold = 8.5, type="GP")
+plot(fit2)
+return.level(fit2, return.period = c(2, 20, 50, 100, 500), do.ci=TRUE)
+ci(fit2, type="return.level", return.period = 500, method="proflik", xrange = c(15, 20), verbose = TRUE)
+```
+
+Declustering aims to remove dependent extrema points, which may carry risk of losing information on wind extremes. Interestingly, the confidence interval of our 2 year return period increased after declustering, but the CI of the 100-year return level decreased.
+
+An alternative way to fix the issue of temporal dependency which does not remove as much information on extreme values is to assume that the peaks over threshold data forms a first order stationary Markov Chain instead of independence. This means that we only limit the dependency of each time point to its previous time point. This means that we will need to implement a bivariate threshold model, where we model the extremas and the same dataset but a lag behind. 
+
+Sometimes, data may not be equally distributed across all time periods. For instance, the extrema data may be distributed differently in the winter than in the summer. This is called non-stationarity, where joint distributions of the data changes over time. There are methods in fixing this issue, by making the GP parameters functions of time or other covariates. We start with splitting the data into summer and non-summer months, since in terms of physical processes, pressure gradients and the jet stream is not as strong in the summer months. We can show this discrepency by plotting boxplots and violin plots of the wind speed with respect to its month:
+```{r}
+extreme_winds = wind_speed %>% filter(wind_speed > 8.5)
+
+# Plot boxplots
+ggplot(extreme_winds, aes(x = factor(Month), y = wind_speed, fill = factor(Month))) + geom_boxplot() +
+  labs(title = "Wind Speed Boxplots",
+       x = "Time Period",
+       y = "Wind Speed (m/s)") +
+  theme_minimal()
+
+# Plot violin plots
+ggplot(extreme_winds, aes(x = factor(Month), y = wind_speed, fill = factor(Month))) + geom_violin() +
+  labs(title = "Wind Speed Violin Plots",
+       x = "Time Period",
+       y = "Wind Speed (m/s)") +
+  theme_minimal()
+```
+
+We see that the summer months(JJA) have the lowest extreme winds. This suggests that the extrema distributions for the summer months is quite different than the extrema distributions of the other months. We thus create a summer index covariate, which is an indicator function that detects whether or not the wind event occurs in the summer or in other seasons. Then, we create a function for scale and shape parameters with respect to the summer index, and modify our likelihood function accordingly.
+```{r}
+wind_speed = wind_speed %>% mutate(summer_index = case_when(Month %in% c(6, 7, 8) ~ 1,
+                                                      TRUE ~ 0))
+declustered_wind = data.frame(wind_speed = c(look), valid_time = wind_speed$valid_time, 
+                              summer_index = wind_speed$summer_index)
+fit3 = fevd(wind_speed, declustered_wind, scale.fun = ~ summer_index, threshold = 8.5, 
+            use.phi = TRUE, type="GP")
+fit4 = fevd(wind_speed, declustered_wind, scale.fun = ~ summer_index, shape.fun = ~summer_index,
+            threshold = 8.5, use.phi = TRUE, type="GP")
+ci(fit3, type="parameter")
+ci(fit4, type="parameter")
+lr.test(fit2, fit3)
+lr.test(fit3, fit4)
+plot(fit3, rperiods = c(2, 20, 50, 100, 500))
+```
+
+We can see that by adding the summer month index to the scale parameter, the model fit improves from previous fits by the likelihood ratio test. However, including a summer month index to the shape parameter did not improve the model's significance, thus we will only include the scale parameter. Moreover, we can see the effects in the return level plots, where the effective return level(the return level given the summer index) is significantly different in the summer months than outside the summer months.
+
+Another way to improve the model is to also vary the threshold with respect to the summer index. However, a key notion to make is that the GP parameters depend on the threshold. We may instead want more flexibility in our parameters, meaning that we don't want our threshold choice to affect the variability of our parameters. A solution to this is to use a point process approach, which is dependent on a threshold and GEV parameters. Since GP parameters are closely related to GEV parameters, our threshold choice can be invariant to the estimated parameters.
+
+We therefore must choose two different thresholds - one for the summer months and another for non-summer months. Since our previous threshold of 8.5 was determined using all the data, we must determine thresholds after splitting the data into two by their summer index. We can use the same methods for finding thresholds as before since the assumptions on the threshold model are the same as the point process model.
+```{r}
+non_summer_wind = wind_speed %>% filter(summer_index == 0)
+summer_wind = wind_speed %>% filter(summer_index == 1)
+
+threshrange.plot(non_summer_wind$wind_speed, r = c(3, 12), nint = 35)
+mrlplot(non_summer_wind$wind_speed, xlim=c(3, 12))
+threshrange.plot(summer_wind$wind_speed, r = c(3, 9), nint = 35)
+mrlplot(summer_wind$wind_speed, xlim=c(3, 9))
+```
+
+From the plots above, we can conclude that a threshold of around 9.6 is good for non-summer months, and a threshold of 7.7 for summer months. We then fit our new model using these two different thresholds, and test for parameter relationships with the summer index. Note that we must redo our declustering algorithm, since we defined a new varying threshold.
+```{r}
+# Declustering algorithm
+threshold = 9.6 - (1.9 * wind_speed$summer_index)
+look1 = decluster(wind_speed$wind_speed, threshold)
+season_declustered_wind = data.frame(wind_speed = c(look1), valid_time = wind_speed$valid_time, 
+                              summer_index = wind_speed$summer_index)
+```
+
+```{r}
+fit5 = fevd(wind_speed, season_declustered_wind, threshold = c(9.6, -1.9), threshold.fun = ~ summer_index,
+            type="PP")
+fit6 = fevd(wind_speed, season_declustered_wind, threshold = c(9.6, -1.9), threshold.fun = ~ summer_index,
+            location.fun = ~ summer_index, type="PP")
+fit7 = fevd(wind_speed, season_declustered_wind, threshold = c(9.6, -1.9), threshold.fun = ~ summer_index,
+            location.fun = ~ summer_index, scale.fun = ~ summer_index, use.phi = TRUE, type="PP")
+fit8 = fevd(wind_speed, season_declustered_wind, threshold = c(9.6, -1.9), threshold.fun = ~ summer_index,
+            location.fun = ~ summer_index, scale.fun = ~ summer_index, use.phi = TRUE, 
+            shape.fun = ~ summer_index, type="PP")
+lr.test(fit5, fit6)
+lr.test(fit6, fit7)
+lr.test(fit7, fit8)
+ci(fit8, type="parameter")
+```
+
+Using our new threshold in a point process model, we have shown through the likelihood ratio test that the best model is one which takes location, scale, and shape parameters as functions, which is surprising given that shape parameters are usually taken to be constant. This may indicate a significance in the tail behavior of the extremal distribution conditional on the summer index. Since $\xi_0 + \xi_1$ is negative(with 95% confidence), we can see that in the summer the tail behavior of extremes is very light to the point where we can make inferences on infinite return levels(any value above the infinite return level is not possible). We now use our best model to find the effective return levels, which are the return levels conditional on a particular covariate value. 
+```{r}
+plot(fit8, rperiods = c(2, 20, 50, 100, 500))
+v = make.qcov(fit8, vals = list(threshold = c(9.6, 7.7),
+                                mu1 = c(0, 1),
+                                phi1 = c(0, 1),
+                                xi1 = c(0, 1)))
+return.level(fit8, return.period = c(2, 20, 50, 100, 500), qcov=v)
+ci(fit8, type="return.level", return.period = 500, qcov = v)
+```
+
+A drawback to using maximum likelihood analysis is the normality assumptions of the MLE estimators. This assumption is then used in our return level inference, which then outputs symmetric return levels, which can often be unrealistic, especially for the shape parameter. Profile likelihood is also not an option, since we are incorporating non-stationarity, which makes the profile likelihood calculation unrealistic. An alternative is to use Bayesian techniques in estimating the parameters.
+
+In the Bayesian framework, the parameters are not assumed to be fixed, and parameter estimation can be approached directly in a probabilistic way instead of relying on sampling and asymptotic arguments. In other words, we can describe parameters using a posterior distribution, by incorporating a prior distribution, which we will naively use the normal distribution. Since the posterior is very difficult to calculate on its own, especially when using a non-conjugate prior, we must rely on sampling techniques such as MCMC(Markov Chain Monte Chain) to accurately describe the posterior. Using the posterior distributions of each parameter, we can calculate the distribution of the return period, which we can use to calculate the 95% confidence interval.
+```{r, warning=FALSE}
+fitBayes = fevd(wind_speed, season_declustered_wind, threshold = c(9.6, -1.9), 
+                threshold.fun = ~ summer_index, location.fun = ~ summer_index, scale.fun = ~ summer_index, 
+                type="PP", use.phi = TRUE, method="Bayesian", iter = 10000, verbose=TRUE)
+plot(fitBayes, rperiods = c(100), type = 'rl')
+plot(fitBayes, "trace")
+v = make.qcov(fitBayes, vals = list(threshold = c(9.6, 7.7),
+                                mu1 = c(0, 1),
+                                phi1 = c(0, 1)))
+ci(fitBayes, return.period = 500, qcov=v)
+```
+
+```{r}
+bayesian_return_level_ci <- function(fit, summer_index, return.period = 100) {
+  samples = fit$results
+  p = 1 / return.period
+  return_levels = c()
+  # Calculate return level based on shape parameter
+  for(j in 1:nrow(samples)) {
+    mu = samples[j, "mu0"] + samples[j, "mu1"] * summer_index
+    sigma = exp(samples[j, "phi0"] + samples[j, "phi1"] * summer_index)
+    xi = samples[j, "xi0"] + samples[j, "xi1"] * summer_index
+    if(abs(xi) < 1e-6) {
+      z_p = mu - (sigma/xi) * (1 - (-log(1-p))^(-xi))
+    } else {
+      z_p = mu - sigma * log(-log(1-p))
+    }
+    return_levels = c(return_levels, z_p)
+  } 
+  lower_ci = quantile(return_levels, probs = c(0.025, 0.975))[1]
+  upper_ci = quantile(return_levels, probs = c(0.025, 0.975))[2]
+  ci = tibble("95% lower CI" = lower_ci, Estimate = mean(return_levels), "95% upper CI" = upper_ci)
+  return(ci)
+}
+```
+
+```{r, warning = FALSE}
+fitBayes1 = fevd(wind_speed, season_declustered_wind, threshold = c(9.6, -1.9), 
+                threshold.fun = ~ summer_index, location.fun = ~ summer_index, scale.fun = ~ summer_index,
+                shape.fun = ~ summer_index, type="PP", use.phi = TRUE, method="Bayesian", 
+                iter = 10000, verbose=TRUE)
+plot(fitBayes1, rperiods = c(100), type = 'rl')
+plot(fitBayes1, "trace")
+bayesian_return_level_ci(fitBayes1, summer_index = 1, return.period = 500)
+```
+
+From our MCMC iterations, we can see that our confidence intervals of return levels are not symmetric anymore due to the non-symmetry of a couple of posterior distributions of parameters, especially the shape parameter. However, the CIs using the Bayesian technique seem to be shifted to the right compared to the effective return levels of the frequentist method. We compare the parameter values and the posterior mean/mode of both methods:
+```{r}
+ci(fit7, type = "parameter")
+ci(fit8, type="parameter")
+
+# Posterior modes of the parameters
+postmode(fit8)
+mu0_mode = postmode(fit8)["mu0"]
+mu1_mode = postmode(fit8)["mu1"]
+phi0_mode = postmode(fit8)["phi0"]
+phi1_mode = postmode(fit8)["phi1"]
+shape_mode = postmode(fit8)["shape"]
+
+# Get return period using posterior mode
+return_period = 500
+postModeReturnLevel_summer = (mu0_mode + mu1_mode) - (exp(phi0_mode + phi1_mode) / shape_mode) * ((1-(-log(1 - 1/return_period))^(-shape_mode)))
+postModeReturnLevel_nonsummer = mu0_mode - (exp(phi0_mode) / shape_mode) * ((1-(-log(1 - 1/return_period))^(-shape_mode)))
+
+paste("CI estimate for posterior mode nonsummer:", postModeReturnLevel_nonsummer)
+paste("CI estimate for posterior mode summer:", postModeReturnLevel_summer)
+```
+
+We see that using the posterior modes for our return level calculation makes their estimates closer to the non-Bayesian estimates. A better, more natural way of calculating the confidence intervals of the return levels however is to calculate the predictive density. Since return levels concern itself with predictions of the future, this method is a more natural way of estimation. Moreover, predictive densities are able to capture the uncertainty of a future prediction as well as the uncertainty of the model estimates. Notice that using only the posterior estimates will only consider the uncertainty of the parameter estimates. Calculating the predictive density is not possible using functions in R packages, so we will only provide an approximation using a brute force approach(Possible source in calculating the distribution: https://stats.stackexchange.com/questions/558672/approximate-posterior-predictive-quantiles-with-numerical-methods, https://cran.r-project.org/web/packages/mvQuad/vignettes/mvQuad_intro.html)
+```{r}
+# Get approximate predictive density
+
+cdf_gev = function(x) {
+  mu_0 = x["mu0"]
+  mu_1 = x["mu1"]
+  phi_0 = x["phi0"]
+  phi_1 = x["phi1"]
+  shape = x["shape"]
+  return(pevd(12.41, loc = mu_0, scale = exp(phi_0), shape = shape, type = "PP"))
+}
+
+1/2
+mean(apply(fit8$results, MARGIN = 1, FUN = cdf_gev)[500:10000])
+```
+
+With a significantly higher effective return level in non-summer months of 18.3656 and 12.55695 in summer months for a return period of 500 years after calculating the approximate posterior predictive distribution, this could be due to an inaccurate calculation of the distribution, or it could reflect the amount of uncertainty that has been considered in the calculation, especially since we have less than 50 years of data available. Notice that the difference is much smaller when calculating the return level of a return period of 2 years, with less than 0.01 difference from the posterior mean estimate. Thus, it is likely that the large discrepancy is due to the large uncertainties inherited by a lack of long-term data. 
+
+A disadvantage in declustering is that we are taking 
+```{r}
+# Plot Confidence Interval Plots from all models
+# Plot return level plots
+ggplot()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
