@@ -1,0 +1,142 @@
+---
+title: "Climate Model"
+output: pdf_document
+date: "2025-08-06"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(extRemes)
+library(dplyr)
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+library(MASS)
+library(evdbayes)
+library(mev)
+library(boot)
+library(tibble)
+library(rpart)
+library(rpart.plot)
+library(rattle)
+```
+
+```{r}
+clim_wind = read.csv("MPI_qdm_pearson.csv")
+clim_wind$time = as.Date(clim_wind$time)
+clim_wind$Year = year(clim_wind$time)
+clim_wind$Month = month(clim_wind$time)
+```
+
+```{r}
+clim_wind = clim_wind %>% mutate(day_of_year = yday(time))
+yearly_mean_climatology = clim_wind %>% group_by(day_of_year) %>% 
+  summarise(mean_wind_speed = mean(surface_wind))
+ggplot(yearly_mean_climatology, aes(x = day_of_year, y = mean_wind_speed)) +
+  geom_line(color = "blue") +
+
+  # Add vertical lines for different seasons
+  geom_vline(xintercept = c(60, 151, 244, 335),  # MAM, JJA, SON, DJF
+             linetype = "dashed", color = "red") +
+  
+  # Add labels (optional)
+  annotate("text", x = 60, y = max(yearly_mean_climatology$mean_wind_speed), label = "MAM", angle = 90, vjust = -0.5) +
+  annotate("text", x = 152, y = max(yearly_mean_climatology$mean_wind_speed), label = "JJA", angle = 90, vjust = -0.5) +
+  annotate("text", x = 244, y = max(yearly_mean_climatology$mean_wind_speed), label = "SON", angle = 90, vjust = -0.5) +
+  annotate("text", x = 335, y = max(yearly_mean_climatology$mean_wind_speed), label = "DJF", angle = 90, vjust = -0.5) +
+
+  labs(title = "Yearly Mean Climatology of Wind Speeds",
+       x = "Day of Year",
+       y = "Mean Wind Speed (m/s)") +
+  theme_minimal()
+```
+
+```{r}
+ggplot(clim_wind, aes(x = day_of_year, y = surface_wind)) + 
+  geom_point(alpha = 0.1) +
+  geom_smooth(method = "loess", span = 0.1, color = "blue", size = 1, fill = "lightblue", se = TRUE) +
+  labs(title = "LOWESS Smoothing by Day of Year",
+       x = "Day of Year",
+       y = "Wind Speed") + 
+  theme_minimal() + 
+  theme(axis.text.x = element_blank())
+```
+
+```{r}
+yearly_max_climatology = clim_wind %>% group_by(day_of_year) %>% 
+  summarise(max_wind_speed = max(surface_wind))
+ggplot(yearly_max_climatology, aes(x = day_of_year, y = max_wind_speed)) +
+  geom_line(color = "blue") +
+
+  # Add vertical lines for different seasons
+  geom_vline(xintercept = c(60, 151, 244, 335),  # MAM, JJA, SON, DJF
+             linetype = "dashed", color = "red") +
+  
+  # Add labels (optional)
+  annotate("text", x = 60, y = max(yearly_max_climatology$max_wind_speed), label = "MAM", angle = 90, vjust = -0.5) +
+  annotate("text", x = 152, y = max(yearly_max_climatology$max_wind_speed), label = "JJA", angle = 90, vjust = -0.5) +
+  annotate("text", x = 244, y = max(yearly_max_climatology$max_wind_speed), label = "SON", angle = 90, vjust = -0.5) +
+  annotate("text", x = 335, y = max(yearly_max_climatology$max_wind_speed), label = "DJF", angle = 90, vjust = -0.5) +
+
+  labs(title = "Yearly Maximum Climatology of Wind Speeds",
+       x = "Day of Year",
+       y = "Mean Wind Speed (m/s)") +
+  theme_minimal()
+```
+
+```{r}
+threshold = quantile(clim_wind$surface_wind, probs = 0.98)
+clim_fit = fevd(surface_wind, clim_wind, threshold = threshold, type = "GP")
+plot(clim_fit)
+plot(clim_fit, "trace")
+return.level(clim_fit, return.period = c(2, 20, 50, 100, 500), do.ci=TRUE)
+ci(clim_fit, type="return.level", method="proflik", return.period = 500, xrange = c(14, 23), verbose = TRUE)
+```
+
+```{r, warning=FALSE}
+threshrange.plot(clim_wind$surface_wind, r = c(4, 12), nint = 25)
+mrlplot(clim_wind$surface_wind, xlim=c(3, 12))
+```
+
+```{r}
+clim_fit1 = fevd(surface_wind, clim_wind, threshold = 8, type = "GP")
+plot(clim_fit1)
+plot(clim_fit1, "trace")
+return.level(clim_fit1, return.period = c(2, 20, 50, 100, 500), do.ci=TRUE)
+return.level(fit1, return.period = c(2, 20, 50, 100, 500), do.ci=TRUE)
+ci(clim_fit1, type="return.level", method="proflik", return.period = 500, xrange = c(15, 23), verbose = TRUE)
+```
+
+```{r}
+emp_cdf = ecdf(clim_wind$surface_wind)
+cdf_value = emp_cdf(8.5)
+atdf(clim_wind$surface_wind, cdf_value)
+```
+
+```{r}
+extreme_winds = clim_wind %>% filter(surface_wind > 8.5)
+extreme_winds = subset(extreme_winds, select = -c(X, time, Year, Month, day_of_year))
+regress_anova = rpart(surface_wind ~ ., extreme_winds, method = "anova", 
+                      control = rpart.control(cp=0, minsplit=5, minbucket=5, maxcompete=0, maxsurrogate=0))
+regress_anova_prune = prune(regress_anova, cp = 0.032)
+#rpart.plot(regress_anova, branch = 0.3)
+rpart.plot(regress_anova_prune, branch = 0.3, compress = TRUE)
+printcp(regress_anova_prune)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+

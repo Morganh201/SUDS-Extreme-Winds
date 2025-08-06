@@ -19,6 +19,8 @@ library(evdbayes)
 library(mev)
 library(boot)
 library(tibble)
+library(rpart)
+library(rpart.plot)
 ```
 
 ```{r}
@@ -235,7 +237,7 @@ extremalindex(wind_speed$surface_wind, threshold1)
 
 With $\theta = 0.52$, the extremal index is shown to be modestly large, with an average cluster size of less than 2. Moreover, we estimate that there are 365 clusters with a run length of 7, meaning that a group of extreme values is considered a cluster if it is separated by at least $r=7$ threshold deficits. To fix the issue of temporal dependencies in extreme values, we can use a declustering algorithm to choose a representative point for each cluster to be fitted into the model.
 ```{r}
-look = decluster(wind_speed$surface_wind, threshold1, r=7)
+look = extRemes::decluster(wind_speed$surface_wind, threshold1, r=7)
 look
 plot(wind_speed$surface_wind[2000:2200], type='o')
 abline(h = threshold1, col = 'blue')
@@ -276,6 +278,12 @@ ggplot(extreme_winds, aes(x = factor(Month), y = surface_wind, fill = factor(Mon
 ```
 
 We see that the summer months(JJA) have the lowest extreme winds. This suggests that the extrema distributions for the summer months is quite different than the extrema distributions of the other months. We thus create a summer index covariate, which is an indicator function that detects whether or not the wind event occurs in the summer or in other seasons. Then, we create a function for scale and shape parameters with respect to the summer index, and modify our likelihood function accordingly.
+
+```{r}
+temp = fevd(surface_wind, wind_speed, threshold = 8.5, type = "PP")
+plot(temp)
+```
+
 ```{r}
 wind_speed = wind_speed %>% mutate(summer_index = case_when(Month %in% c(6, 7, 8) ~ 1,
                                                       TRUE ~ 0))
@@ -311,7 +319,7 @@ From the plots above, we can conclude that a threshold of around 9.6 is good for
 ```{r}
 # Declustering algorithm
 threshold = 9.6 - (1.9 * wind_speed$summer_index)
-look1 = decluster(wind_speed$surface_wind, threshold)
+look1 = extRemes::decluster(wind_speed$surface_wind, threshold)
 season_declustered_wind = data.frame(surface_wind = c(look1), valid_time = wind_speed$valid_time, 
                               summer_index = wind_speed$summer_index)
 ```
@@ -343,14 +351,18 @@ return.level(fit8, return.period = c(2, 20, 50, 100, 500), qcov=v)
 ci(fit8, type="return.level", return.period = 500, qcov = v)
 ```
 
+```{r}
+ci(fit8, type="parameter")
+```
+
 A drawback to using maximum likelihood analysis is the normality assumptions of the MLE estimators. This assumption is then used in our return level inference, which then outputs symmetric return levels, which can often be unrealistic, especially for the shape parameter. Profile likelihood is also not an option, since we are incorporating non-stationarity, which makes the profile likelihood calculation unrealistic. An alternative is to use Bayesian techniques in estimating the parameters.
 
-In the Bayesian framework, the parameters are not assumed to be fixed, and parameter estimation can be approached directly in a probabilistic way instead of relying on sampling and asymptotic arguments. In other words, we can describe parameters using a posterior distribution, by incorporating a prior distribution, which we will naively use the normal distribution. Since the posterior is very difficult to calculate on its own, especially when using a non-conjugate prior, we must rely on sampling techniques such as MCMC(Markov Chain Monte Chain) to accurately describe the posterior. Using the posterior distributions of each parameter, we can calculate the distribution of the return period, which we can use to calculate the 95% confidence interval.
+In the Bayesian framework, the parameters are not assumed to be fixed, and parameter estimation can be approached directly in a probabilistic way instead of relying on sampling and asymptotic arguments. In other words, we can describe parameters using a posterior distribution, by incorporating a prior distribution, which we will naively use the normal distribution. Since the posterior is very difficult to calculate on its own, especially when using a non-conjugate prior, we must rely on sampling techniques such as MCMC(Markov Chain Monte Chain) to accurately describe the posterior. Using the posterior distributions of each parameter, we can calculate the distribution of the return period by sampling from the posteriors using MCMC samples, which we can use to calculate the 95% credible interval.
 ```{r, warning=FALSE}
 fitBayes = fevd(surface_wind, season_declustered_wind, threshold = c(9.6, -1.9), 
                 threshold.fun = ~ summer_index, location.fun = ~ summer_index, scale.fun = ~ summer_index, 
                 type="PP", use.phi = TRUE, method="Bayesian", iter = 10000, verbose=TRUE)
-plot(fitBayes, rperiods = c(100), type = 'rl')
+plot(fitBayes, rperiods = c(100))
 plot(fitBayes, "trace")
 v = make.qcov(fitBayes, vals = list(threshold = c(9.6, 7.7),
                                 mu1 = c(0, 1),
@@ -358,9 +370,10 @@ v = make.qcov(fitBayes, vals = list(threshold = c(9.6, 7.7),
 ci(fitBayes, return.period = 500, qcov=v)
 ```
 
+The above does not incorporate the shape parameter as a linear function. To incorporate this, we need to write our own return level credible interval function, since the built-in function always assumes that $xi$ is not a function. We then compute the posterior mean and mode for the return level estimates.
 ```{r}
 bayesian_return_level_ci <- function(fit, summer_index, return.period = 100) {
-  samples = fit$results
+  samples = fit$results[500:10000,]
   p = 1 / return.period
   return_levels = c()
   # Calculate return level based on shape parameter
@@ -368,6 +381,7 @@ bayesian_return_level_ci <- function(fit, summer_index, return.period = 100) {
     mu = samples[j, "mu0"] + samples[j, "mu1"] * summer_index
     sigma = exp(samples[j, "phi0"] + samples[j, "phi1"] * summer_index)
     xi = samples[j, "xi0"] + samples[j, "xi1"] * summer_index
+    # xi = samples[j, "shape"]
     if(abs(xi) < 1e-6) {
       z_p = mu - sigma * log(-log(1-p))
     } else {
@@ -377,7 +391,12 @@ bayesian_return_level_ci <- function(fit, summer_index, return.period = 100) {
   } 
   lower_ci = quantile(return_levels, probs = c(0.025, 0.975))[1]
   upper_ci = quantile(return_levels, probs = c(0.025, 0.975))[2]
-  ci = tibble("95% lower CI" = lower_ci, Estimate = mean(return_levels), "95% upper CI" = upper_ci)
+  density_return_levels = density(return_levels)
+  mode_estimate = density_return_levels$x[which.max(density_return_levels$y)]
+  ci = tibble("95% lower CI" = lower_ci, "Posterior Mean" = mean(return_levels), 
+              "Posterior Mode" = mode_estimate, "95% upper CI" = upper_ci)
+  hist(return_levels, prob=TRUE, breaks = 30)
+  lines(density_return_levels)
   return(ci)
 }
 ```
@@ -390,35 +409,13 @@ fitBayes1 = fevd(surface_wind, season_declustered_wind, threshold = c(9.6, -1.9)
 plot(fitBayes1, return.period = c(2, 100, 500))
 plot(fitBayes1, "trace")
 bayesian_return_level_ci(fitBayes1, summer_index = 0, return.period = 500)
-```
-
-From our MCMC iterations, we can see that our confidence intervals of return levels are not symmetric anymore due to the non-symmetry of a couple of posterior distributions of parameters, especially the shape parameter. However, the CIs using the Bayesian technique seem to be shifted to the right compared to the effective return levels of the frequentist method. We compare the parameter values and the posterior mean/mode of both methods:
-```{r}
 ci(fitBayes, type = "parameter")
-ci(fitBayes1, type="parameter")
-
-# Posterior modes of the parameters
-postmode(fitBayes1)
-mu0_mode = postmode(fitBayes1)["mu0"]
-mu1_mode = postmode(fitBayes1)["mu1"]
-phi0_mode = postmode(fitBayes1)["phi0"]
-phi1_mode = postmode(fitBayes1)["phi1"]
-xi0_mode = postmode(fitBayes1)["xi0"]
-xi1_mode = postmode(fitBayes1)["xi1"]
-
-# Get return period using posterior mode
-return_period = 500
-postModeReturnLevel_summer = (mu0_mode + mu1_mode) - (exp(phi0_mode + phi1_mode) / (xi0_mode + xi1_mode)) * ((1-(-log(1 - 1/return_period))^(-(xi0_mode + xi1_mode))))
-postModeReturnLevel_nonsummer = mu0_mode - (exp(phi0_mode) / xi0_mode) * ((1-(-log(1 - 1/return_period))^(-xi0_mode)))
-
-paste("CI estimate for posterior mode nonsummer:", postModeReturnLevel_nonsummer)
-paste("CI estimate for posterior mode summer:", postModeReturnLevel_summer)
-```
-```{r}
-fit8
+ci(fitBayes1, type = "parameter", alpha = 0.05)
 ```
 
-We see that using the posterior modes for our return level calculation makes their estimates closer to the non-Bayesian estimates. A better, more natural way of calculating the confidence intervals of the return levels however is to calculate the predictive density. Since return levels concern itself with predictions of the future, this method is a more natural way of estimation. Moreover, predictive densities are able to capture the uncertainty of a future prediction as well as the uncertainty of the model estimates. Notice that using only the posterior estimates will only consider the uncertainty of the parameter estimates. Calculating the predictive density is not possible using functions in R packages, so we will only provide an approximation using a brute force approach(Possible source in calculating the distribution: https://stats.stackexchange.com/questions/558672/approximate-posterior-predictive-quantiles-with-numerical-methods, https://cran.r-project.org/web/packages/mvQuad/vignettes/mvQuad_intro.html)
+With 95% confidence, but not 90%, we see that the credible intervals of the $\xi_1$ parameter include the value 0, meaning that we have some evidence that the simpler model without $\xi$ as a function serves as a good enough generalization of the data compared with the more complex model. 
+
+We see that using the posterior modes for our return level calculation makes their estimates closer to the non-Bayesian estimates. A better, more natural way of calculating the credible intervals of the return levels however is to calculate the predictive density. Since return levels concern itself with predictions of the future, this method is a more natural way of estimation. Moreover, predictive densities are able to capture the uncertainty of a future prediction as well as the uncertainty of the model estimates. Notice that using only the posterior estimates will only consider the uncertainty of the parameter estimates. Calculating the predictive density is not possible using functions in R packages, so we will only provide an approximation using a brute force approach(Possible source in calculating the distribution: https://stats.stackexchange.com/questions/558672/approximate-posterior-predictive-quantiles-with-numerical-methods, https://cran.r-project.org/web/packages/mvQuad/vignettes/mvQuad_intro.html)
 ```{r}
 # Get approximate predictive density
 
@@ -429,14 +426,19 @@ cdf_gev = function(x) {
   phi_1 = x["phi1"]
   xi_0 = x["xi0"]
   xi_1 = x["xi1"]
-  return(pevd(12.41, loc = mu_0 + mu_1, scale = exp(phi_0 + phi_1), shape = xi_0 + xi_1, type = "PP"))
+  return(pevd(9.3, loc = mu_0 + mu_1, scale = exp(phi_0 + phi_1), shape = xi_0 + xi_1, type = "PP"))
 }
 
 1/2
 mean(apply(fitBayes1$results, MARGIN = 1, FUN = cdf_gev)[500:10000])
 ```
 
-With a significantly higher effective return level in non-summer months of 18.3656 and 12.55695 in summer months for a return period of 500 years after calculating the approximate posterior predictive distribution, this could be due to an inaccurate calculation of the distribution, or it could reflect the amount of uncertainty that has been considered in the calculation, especially since we have less than 50 years of data available. Notice that the difference is much smaller when calculating the return level of a return period of 2 years, with less than 0.01 difference from the posterior mean estimate. Thus, it is likely that the large discrepancy is due to the large uncertainties inherited by a lack of long-term data. 
+With a significantly higher effective return level in non-summer months of 19.91 and 12.75 in summer months for a return period of 500 years after calculating the approximate posterior predictive distribution, this could be due to an inaccurate calculation of the distribution, or it could reflect the amount of uncertainty that has been considered in the calculation, especially since we have less than 50 years of data available. Notice that the difference is much smaller when calculating the return level of a return period of 2 years, with less than 0.01 difference from the posterior mean estimate. Thus, it is likely that the large discrepancy is due to the large uncertainties inherited by a lack of long-term data. 
+
+```{r}
+BayesFactor(fitBayes, fitBayes1, method = "harmonic")
+```
+
 
 A disadvantage in declustering is that we are taking 
 ```{r}
@@ -444,6 +446,242 @@ A disadvantage in declustering is that we are taking
 # Plot return level plots
 ggplot()
 ```
+
+We now expand our analysis to include other covariates. This allows us to perform sensitivity analysis, where we can explore how different independent covariates affect surface winds and examine if there is any significant differences in extreme value distributions conditional on different covariate values. We have already looked at the differences with respect to whether or not the data occurred in the summer or not, by introducing a categorical variable into the GEV parameters, and concluded that there is a significant difference in the extremal distributions, especially in the location and scale parameters(and the tail behavior if we only considered the frequentist approach). Now, we want to explore other covariates such as the thermal wind(temperature gradients influence the change in geostrophic winds with respect to altitude) and atmospheric stability(unstable atmosphere increases chance of a storm, which may cause greater wind speeds).
+
+We can check if these covariates have some correlation with the surface level winds by conducting the following exploratory analysis:
+```{r}
+plot_discretedist = function(x, str) {
+  ggplot(extreme_winds, aes(x = x, y = surface_wind, fill = x)) + geom_boxplot() +
+    labs(title = "Wind Speed Boxplots",
+         x = str,
+         y = "Wind Speed (m/s)") +
+    theme_minimal()
+  # ggplot(extreme_winds, aes(x = x, y = surface_wind, fill = x)) + geom_violin() +
+  #   labs(title = "Wind Speed Violin Plots",
+  #        x = str,
+  #        y = "Wind Speed (m/s)") +
+  #   theme_minimal()
+}
+```
+
+```{r}
+boxes = 5
+extreme_winds$discrete_llw = cut_number(extreme_winds$low.level_wind, n=boxes)
+extreme_winds$discrete_js = cut_number(extreme_winds$jet_stream, n=boxes)
+extreme_winds$discrete_as1 = cut_number(extreme_winds$atmos_stability1, n=boxes)
+extreme_winds$discrete_as2 = cut_number(extreme_winds$atmos_stability2, n=boxes)
+extreme_winds$discrete_twx = cut_number(extreme_winds$thermal_wind_y_grad, n=boxes)
+extreme_winds$discrete_twy = cut_number(extreme_winds$thermal_wind_x_grad, n=boxes)
+
+plot_discretedist(extreme_winds$discrete_llw, "Low Level Wind")
+plot_discretedist(extreme_winds$discrete_js, "Jet Stream")
+plot_discretedist(extreme_winds$discrete_as1, "Atmospheric Stability Layer 1")
+plot_discretedist(extreme_winds$discrete_as2, "Atmospheric Stability Layer 2")
+plot_discretedist(extreme_winds$discrete_twx, "Thermal Wind x Grad")
+plot_discretedist(extreme_winds$discrete_twy, "Thermal Wind y Grad")
+```
+
+```{r}
+extreme_winds = extreme_winds %>% mutate(across(c(atmos_stability1, atmos_stability2), 
+                                                  ~scale(.) %>% as.vector))
+extreme_winds = extreme_winds %>% mutate(summer_index = case_when(Month %in% c(6, 7, 8) ~ 1,
+                                                      TRUE ~ 0))
+lm_fit = lm(surface_wind ~ (low.level_wind + jet_stream + atmos_stability1 + atmos_stability2 + thermal_wind_y_grad + thermal_wind_x_grad + summer_index)^2, data = extreme_winds)
+summary(lm_fit)
+```
+
+Clear distinctions can be made for low level winds and the jet stream and its relationship with extreme surface winds when conducting the boxplot/violin plot analysis. When performing regression analysis with interaction effects, atmospheric stability in the second layer(850-500hPa) also has a significant effect with extreme surface winds. A point to notice is the interaction effects between low level winds and the atmospheric stability in layer 2, where we see that higher low level winds and/or higher as2 decreases the rate of change in surface winds.
+
+We can take these findings, although only shows linear relationships with extreme surface winds, and include them into our extreme value distribution parameters. If we can find suitable covariates, then we can derive better stationarity in our data conditional to such covariates and provide a better fit to the distribution. In addition, we can make statistical conclusions on the behavior of extreme surface winds compared with different covariate values. We ignore varying thresholds across different covariates for simplicity and assume that its influence to the model is negligible for now(exception to the threshold with respect to the summer index), and only focus on the three most significant variables:
+```{r}
+season_declustered_wind = season_declustered_wind %>% mutate(wind_speed$low.level_wind, wind_speed$jet_stream, wind_speed$atmos_stability2) %>% rename(low.level_wind = "wind_speed$low.level_wind", jet_stream = "wind_speed$jet_stream", atmos_stability2 = "wind_speed$atmos_stability2")
+```
+
+```{r, warning=FALSE}
+fit9 = fevd(surface_wind, season_declustered_wind, threshold = c(9.6, -1.9), threshold.fun = ~ summer_index,
+            location.fun = ~ summer_index + low.level_wind, 
+            scale.fun = ~ summer_index, use.phi = TRUE, 
+            shape.fun = ~ summer_index, type="PP")
+fit10 = fevd(surface_wind, season_declustered_wind, threshold = c(9.6, -1.9), threshold.fun = ~ summer_index,
+            location.fun = ~ summer_index + low.level_wind, 
+            scale.fun = ~ summer_index + low.level_wind, use.phi = TRUE, 
+            shape.fun = ~ summer_index, type="PP")
+fit11 = fevd(surface_wind, season_declustered_wind, threshold = c(9.6, -1.9), threshold.fun = ~ summer_index,
+            location.fun = ~ summer_index + low.level_wind, 
+            scale.fun = ~ summer_index + low.level_wind, use.phi = TRUE, 
+            shape.fun = ~ summer_index + low.level_wind, type="PP")
+fit12 = fevd(surface_wind, season_declustered_wind, threshold = c(9.6, -1.9), threshold.fun = ~ summer_index,
+            location.fun = ~ summer_index + low.level_wind + jet_stream, 
+            scale.fun = ~ summer_index + low.level_wind, use.phi = TRUE, 
+            shape.fun = ~ summer_index + low.level_wind, type="PP")
+fit13 = fevd(surface_wind, season_declustered_wind, threshold = c(9.6, -1.9), threshold.fun = ~ summer_index,
+            location.fun = ~ summer_index + low.level_wind + jet_stream, 
+            scale.fun = ~ summer_index + low.level_wind + jet_stream, use.phi = TRUE, 
+            shape.fun = ~ summer_index + low.level_wind, type="PP")
+fit14 = fevd(surface_wind, season_declustered_wind, threshold = c(9.6, -1.9), threshold.fun = ~ summer_index,
+            location.fun = ~ summer_index + low.level_wind + jet_stream + atmos_stability2, 
+            scale.fun = ~ summer_index + low.level_wind, use.phi = TRUE, 
+            shape.fun = ~ summer_index + low.level_wind, type="PP")
+fit15 = fevd(surface_wind, season_declustered_wind, threshold = c(9.6, -1.9), threshold.fun = ~ summer_index,
+            location.fun = ~ summer_index + low.level_wind + jet_stream + atmos_stability2, 
+            scale.fun = ~ summer_index + low.level_wind, use.phi = TRUE, 
+            shape.fun = ~ low.level_wind, type="PP")
+lr.test(fit8, fit9)
+lr.test(fit9, fit10)
+lr.test(fit10, fit11)
+lr.test(fit11, fit12)
+lr.test(fit12, fit13)
+lr.test(fit12, fit14)
+lr.test(fit14, fit15)
+```
+
+```{r, warning=FALSE}
+fitBayes2 = fevd(surface_wind, season_declustered_wind, threshold = c(9.6, -1.9), 
+                 threshold.fun = ~ summer_index, 
+                 location.fun = ~ summer_index + low.level_wind + jet_stream + atmos_stability2, 
+                 scale.fun = ~ summer_index + low.level_wind + jet_stream, use.phi = TRUE, 
+                 shape.fun = ~ summer_index + low.level_wind, type="PP", method = "Bayesian", iter = 10000,
+                 verbose = TRUE)
+```
+
+```{r}
+extreme_winds = wind_speed %>% filter(surface_wind > 8.5)
+extreme_winds = extreme_winds %>% mutate(summer_index = case_when(Month %in% c(6, 7, 8) ~ 1,
+                                                      TRUE ~ 0))
+extreme_winds = subset(extreme_winds, select = -c(pressure_level, latitude, longitude, Year, Month, day_of_year))
+```
+
+
+```{r}
+library(rattle)
+regress_anova = rpart(surface_wind ~ ., extreme_winds, method = "anova", 
+                      control = rpart.control(cp=0, minsplit=5, minbucket=5, maxcompete=0, maxsurrogate=0))
+regress_anova_prune = prune(regress_anova, cp = 0.01)
+#rpart.plot(regress_anova, branch = 0.3)
+fancyRpartPlot(regress_anova_prune)
+rpart.plot(regress_anova_prune, branch = 0.3, compress = TRUE)
+```
+
+Using the clusters derived from the regression tree, we define binary variables that correspond to each cluster(k-1 variables for k clusters), and then fit regression parameters given the binary variables so that we can derive effective return levels corresponding to each cluster.
+```{r}
+wind_speed = wind_speed %>% mutate(cluster1 = case_when(low.level_wind > 22 & low.level_wind <= 33 ~ 1,
+                                                        TRUE ~ 0),
+                                   cluster2 = case_when(low.level_wind >= 33 & low.level_wind < 39 & thermal_wind_y_grad < 6.3 ~ 1,
+                                                        TRUE ~ 0),
+                                   cluster3 = case_when(low.level_wind >= 33 & low.level_wind < 39 & thermal_wind_y_grad >= 6.3 &
+                                                          thermal_wind_x_grad > -0.32 ~ 1,
+                                                        TRUE ~ 0),
+                                   cluster4 = case_when(low.level_wind >= 33 & low.level_wind < 39 & thermal_wind_y_grad >= 6.3 &
+                                                          thermal_wind_x_grad <= -0.32 ~ 1,
+                                                        TRUE ~ 0),
+                                   cluster5 = case_when(low.level_wind >= 39 & low.level_wind < 43 ~ 1,
+                                                        TRUE ~ 0),
+                                   cluster6 = case_when(low.level_wind >= 43 ~ 1,
+                                                        TRUE ~ 0))
+```
+
+```{r}
+cluster0 = wind_speed %>% filter(low.level_wind <= 22)
+cluster1 = wind_speed %>% filter(cluster1 == 1)
+cluster2 = wind_speed %>% filter(cluster2 == 1)
+cluster3 = wind_speed %>% filter(cluster3 == 1)
+cluster4 = wind_speed %>% filter(cluster4 == 1)
+cluster5 = wind_speed %>% filter(cluster5 == 1)
+cluster6 = wind_speed %>% filter(cluster6 == 1)
+
+prob = 0.95
+t0 = quantile(cluster0$surface_wind, prob = prob)
+t1 = quantile(cluster1$surface_wind, prob = prob)
+t2 = quantile(cluster2$surface_wind, prob = prob)
+t3 = quantile(cluster3$surface_wind, prob = prob)
+t4 = quantile(cluster4$surface_wind, prob = prob)
+t5 = quantile(cluster5$surface_wind, prob = prob)
+t6 = quantile(cluster6$surface_wind, prob = prob)
+x = c(1, 2, 3, 4, 5, 6, 7)
+y = c(t0, t1, t2, t3, t4, t5, t6)
+temp = data.frame(x, y)
+
+ggplot(temp, aes(x = x, y = y)) +
+  geom_point(color = "darkgreen", size = 3) + geom_line() +
+  labs(title = "Threshold Selection for each Cluster", x = "Cluster Index", y = "98th Percentile Winds") +
+  theme_minimal()
+```
+
+Threshold selection is very hard to determine using mean residual life plots and parameter plots against $u$, as shown here. Thus, we will rely on arbitrary threshold selections, where we choose the 98th percentile winds for each cluster.
+```{r, warning=FALSE}
+threshrange.plot(cluster0$surface_wind, r = c(3, 11), nint = 35)
+mrlplot(cluster0$surface_wind, xlim=c(3, 12))
+threshrange.plot(cluster1$surface_wind, r = c(3, 12), nint = 35)
+mrlplot(cluster1$surface_wind, xlim=c(3, 12))
+threshrange.plot(cluster2$surface_wind, r = c(3, 12), nint = 35)
+mrlplot(cluster2$surface_wind, xlim=c(3, 12))
+threshrange.plot(cluster3$surface_wind, r = c(3, 12), nint = 35)
+mrlplot(cluster3$surface_wind, xlim=c(3, 12))
+threshrange.plot(cluster4$surface_wind, r = c(3, 12), nint = 35)
+mrlplot(cluster4$surface_wind, xlim=c(3, 12))
+threshrange.plot(cluster5$surface_wind, r = c(3, 12), nint = 35)
+mrlplot(cluster5$surface_wind, xlim=c(3, 12))
+threshrange.plot(cluster6$surface_wind, r = c(3, 12), nint = 35)
+mrlplot(cluster6$surface_wind, xlim=c(3, 12))
+```
+
+```{r, warning = FALSE}
+fit9 = fevd(surface_wind, wind_speed, threshold = c(t0, t1-t0, t2-t0, t3-t0, t4-t0, t5-t0, t6-t0), 
+            threshold.fun = ~ cluster1 + cluster2 + cluster3 + cluster4 + cluster5 + cluster6, type="PP")
+fit10 = fevd(surface_wind, wind_speed, threshold = c(t0, t1-t0, t2-t0, t3-t0, t4-t0, t5-t0, t6-t0), 
+            threshold.fun = ~ cluster1 + cluster2 + cluster3 + cluster4 + cluster5 + cluster6, 
+            location.fun = ~ cluster1 + cluster2 + cluster3 + cluster4 + cluster5 + cluster6, type="PP")
+fit11 = fevd(surface_wind, wind_speed, threshold = c(t0, t1-t0, t2-t0, t3-t0, t4-t0, t5-t0, t6-t0), 
+            threshold.fun = ~ cluster1 + cluster2 + cluster3 + cluster4 + cluster5 + cluster6, 
+            location.fun = ~ cluster1 + cluster2 + cluster3 + cluster4 + cluster5 + cluster6, 
+            scale.fun = ~ cluster1 + cluster2 + cluster3 + cluster4 + cluster5 + cluster6, use.phi = TRUE, type="PP")
+fit12 = fevd(surface_wind, wind_speed, threshold = c(t0, t1-t0, t2-t0, t3-t0, t4-t0, t5-t0, t6-t0), 
+            threshold.fun = ~ cluster1 + cluster2 + cluster3 + cluster4 + cluster5 + cluster6, 
+            location.fun = ~ cluster1 + cluster2 + cluster3 + cluster4 + cluster5 + cluster6, 
+            shape.fun = ~ cluster1 + cluster2 + cluster3 + cluster4 + cluster5 + cluster6, type="PP")
+lr.test(fit9, fit10)
+lr.test(fit10, fit11)
+lr.test(fit10, fit12)
+plot(fit10)
+plot(fit11)
+plot(fit12)
+```
+
+From the likelihood ratio test, we see that fitting only the location parameter using regression parameters yields the best fit in terms of parsimony, and the qq-plot looks almost perfect except for one point, which we can label as an outlier.
+```{r}
+temp <- data.frame(
+  time = wind_speed$valid_time,
+  ts_value = as.numeric(wind_speed$surface_wind),
+  vector_value = c(fit10$threshold, rep(NA, length(wind_speed$surface_wind) - length(fit10$threshold)))  # pad with NA if needed
+)
+
+ggplot(temp[1:2000, ], aes(x = time)) +
+  geom_line(aes(y = ts_value), color = "blue") +
+  geom_line(aes(y = vector_value), color = "red") +
+  labs(title = "Wind Speeds Plotted with Threshold Selection", y = "Wind Speed (m/s)") + theme_minimal()
+```
+
+```{r}
+v = make.qcov(fit10, vals = list(threshold = c(t0, t1, t2, t3, t4, t5, t6),
+                                mu1 = c(0, 1, 0, 0, 0, 0, 0),
+                                mu2 = c(0, 0, 1, 0, 0, 0, 0),
+                                mu3 = c(0, 0, 0, 1, 0, 0, 0),
+                                mu4 = c(0, 0, 0, 0, 1, 0, 0),
+                                mu5 = c(0, 0, 0, 0, 0, 1, 0),
+                                mu6 = c(0, 0, 0, 0, 0, 0, 1)))
+return.level(fit10, return.period = c(2, 20, 50, 100, 500), qcov=v)
+ci(fit10, return.period = c(2), qcov=v)
+```
+
+```{r}
+return.level(fit1, return.period = c(2, 20, 50, 100, 500), do.ci = TRUE)
+```
+
+
+
+
+
 
 
 
