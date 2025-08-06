@@ -127,8 +127,69 @@ rpart.plot(regress_anova_prune, branch = 0.3, compress = TRUE)
 printcp(regress_anova_prune)
 ```
 
+```{r}
+yearly_max_climatology_hist = wind_speed %>% group_by(day_of_year) %>% 
+  summarise(max_wind_speed = max(surface_wind))
+yearly_max_climatology_future = clim_wind %>% group_by(day_of_year) %>% 
+  summarise(max_wind_speed = max(surface_wind))
 
+temp <- data.frame(
+  time = c(1:366),
+  hist = yearly_max_climatology_hist$max_wind_speed,
+  future = yearly_max_climatology_future$max_wind_speed
+)
 
+temp_long = data.frame(
+  time = rep(temp$time, 2),
+  y = c(temp$hist, temp$future),
+  group = rep(c("Historical (1979-2020)", "Future (2025-2066)"), each = 366)
+)
+
+ggplot(temp_long, aes(x = time, y = y, color = group)) +
+  geom_line() +
+  labs(title = "Yearly Maximum Climatology of Wind Speeds in Toronto (Historical vs Future)",
+       x = "Day of Year",
+       y = "Maximum Wind Speed (m/s)",
+       color = "Time Period") +
+  theme_minimal() +
+  theme(
+    legend.position = c(0.85, 0.15),  # x and y coordinates inside plot
+    legend.background = element_rect(fill = "white", color = "black")  # optional styling
+  ) + 
+  
+  # Add vertical lines for different seasons
+  geom_vline(xintercept = c(60, 151, 244, 335),  # MAM, JJA, SON, DJF
+             linetype = "dashed", color = "red") +
+  
+  # Add labels (optional)
+  annotate("text", x = 60, y = max(yearly_max_climatology_hist$max_wind_speed) - 0.6, label = "Spring", angle = 90, vjust = -0.5) +
+  annotate("text", x = 152, y = max(yearly_max_climatology_hist$max_wind_speed) - 0.6, label = "Summer", angle = 90, vjust = -0.5) +
+  annotate("text", x = 244, y = max(yearly_max_climatology_hist$max_wind_speed) - 0.6, label = "Autumn", angle = 90, vjust = -0.5) +
+  annotate("text", x = 335, y = max(yearly_max_climatology_hist$max_wind_speed) - 0.6, label = "Winter", angle = 90, vjust = -0.5)
+```
+
+```{r}
+temp = subset(wind_speed, select = -c(pressure_level, latitude, longitude, valid_time, Year, 
+                                      Month, day_of_year, summer_index, cluster1, cluster2, cluster3,
+                                      cluster4, cluster5, cluster6))
+temp1 = subset(clim_wind, select = -c(X, Year, Month, day_of_year, time))
+temp = temp %>% rename(low_level_wind = low.level_wind) %>% mutate(period = "Historical")
+temp1 = temp1 %>% mutate(period = "Future")
+combined = rbind(temp, temp1)
+ggplot(combined, aes(x = surface_wind, fill = period)) +
+  geom_density(alpha=0.4) + 
+  labs(title = "Density Plots of Wind Speeds Historical vs. Future", fill = "Period", 
+       x = "Wind Speed (m/s)", y = "Probability") + 
+  theme_minimal() + 
+  theme(
+    legend.position = c(0.85, 0.5),  # x and y coordinates inside plot
+    legend.background = element_rect(fill = "white", color = "black")  # optional styling
+  )
+wilcox.test(temp$surface_wind, temp1$surface_wind, 
+            alternative = "two.sided",
+            paired = FALSE,
+            exact = TRUE)
+```
 
 
 

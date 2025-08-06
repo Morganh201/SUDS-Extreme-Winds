@@ -50,7 +50,7 @@ ggplot(yearly_mean_climatology, aes(x = day_of_year, y = mean_wind_speed)) +
   annotate("text", x = 244, y = max(yearly_mean_climatology$mean_wind_speed), label = "SON", angle = 90, vjust = -0.5) +
   annotate("text", x = 335, y = max(yearly_mean_climatology$mean_wind_speed), label = "DJF", angle = 90, vjust = -0.5) +
 
-  labs(title = "Yearly Mean Climatology of Wind Speeds",
+  labs(title = "Yearly Mean Climatology of Wind Speeds in Toronto",
        x = "Day of Year",
        y = "Mean Wind Speed (m/s)") +
   theme_minimal()
@@ -79,14 +79,14 @@ ggplot(yearly_max_climatology, aes(x = day_of_year, y = max_wind_speed)) +
              linetype = "dashed", color = "red") +
   
   # Add labels (optional)
-  annotate("text", x = 60, y = max(yearly_max_climatology$max_wind_speed), label = "MAM", angle = 90, vjust = -0.5) +
-  annotate("text", x = 152, y = max(yearly_max_climatology$max_wind_speed), label = "JJA", angle = 90, vjust = -0.5) +
-  annotate("text", x = 244, y = max(yearly_max_climatology$max_wind_speed), label = "SON", angle = 90, vjust = -0.5) +
-  annotate("text", x = 335, y = max(yearly_max_climatology$max_wind_speed), label = "DJF", angle = 90, vjust = -0.5) +
+  annotate("text", x = 60, y = max(yearly_max_climatology$max_wind_speed) - 0.6, label = "Spring", angle = 90, vjust = -0.5) +
+  annotate("text", x = 152, y = max(yearly_max_climatology$max_wind_speed) - 0.6, label = "Summer", angle = 90, vjust = -0.5) +
+  annotate("text", x = 244, y = max(yearly_max_climatology$max_wind_speed) - 0.6, label = "Autumn", angle = 90, vjust = -0.5) +
+  annotate("text", x = 335, y = max(yearly_max_climatology$max_wind_speed) - 0.6, label = "Winter", angle = 90, vjust = -0.5) +
 
-  labs(title = "Yearly Maximum Climatology of Wind Speeds",
+  labs(title = "Yearly Maximum Climatology of Wind Speeds in Toronto",
        x = "Day of Year",
-       y = "Mean Wind Speed (m/s)") +
+       y = "Maximum Wind Speed (m/s)") +
   theme_minimal()
 ```
 
@@ -264,15 +264,15 @@ extreme_winds = wind_speed %>% filter(surface_wind > 8.5)
 
 # Plot boxplots
 ggplot(extreme_winds, aes(x = factor(Month), y = surface_wind, fill = factor(Month))) + geom_boxplot() +
-  labs(title = "Wind Speed Boxplots",
-       x = "Time Period",
+  labs(title = "Extreme Wind Speeds above 8.5 m/s in Toronto",
+       x = "Month",
        y = "Wind Speed (m/s)") +
   theme_minimal()
 
 # Plot violin plots
 ggplot(extreme_winds, aes(x = factor(Month), y = surface_wind, fill = factor(Month))) + geom_violin() +
   labs(title = "Wind Speed Violin Plots",
-       x = "Time Period",
+       x = "Month",
        y = "Wind Speed (m/s)") +
   theme_minimal()
 ```
@@ -556,11 +556,11 @@ extreme_winds = subset(extreme_winds, select = -c(pressure_level, latitude, long
 ```{r}
 library(rattle)
 regress_anova = rpart(surface_wind ~ ., extreme_winds, method = "anova", 
-                      control = rpart.control(cp=0, minsplit=5, minbucket=5, maxcompete=0, maxsurrogate=0))
+                      control = rpart.control(cp=0, minsplit=25, minbucket=15, maxcompete=0, maxsurrogate=0))
 regress_anova_prune = prune(regress_anova, cp = 0.01)
 #rpart.plot(regress_anova, branch = 0.3)
-fancyRpartPlot(regress_anova_prune)
-rpart.plot(regress_anova_prune, branch = 0.3, compress = TRUE)
+#fancyRpartPlot(regress_anova_prune)
+rpart.plot(regress_anova_prune, branch = 0.3, compress = TRUE, extra = 101)
 ```
 
 Using the clusters derived from the regression tree, we define binary variables that correspond to each cluster(k-1 variables for k clusters), and then fit regression parameters given the binary variables so that we can derive effective return levels corresponding to each cluster.
@@ -604,7 +604,9 @@ temp = data.frame(x, y)
 
 ggplot(temp, aes(x = x, y = y)) +
   geom_point(color = "darkgreen", size = 3) + geom_line() +
-  labs(title = "Threshold Selection for each Cluster", x = "Cluster Index", y = "98th Percentile Winds") +
+  labs(title = "Threshold Selection for each Cluster", x = "Cluster Index", 
+       y = "Threshold (95th Percentile Winds)") +
+  scale_x_continuous(breaks = 1:7) + 
   theme_minimal()
 ```
 
@@ -648,18 +650,33 @@ plot(fit11)
 plot(fit12)
 ```
 
+```{r}
+plot(fit10, "qq")
+```
+
 From the likelihood ratio test, we see that fitting only the location parameter using regression parameters yields the best fit in terms of parsimony, and the qq-plot looks almost perfect except for one point, which we can label as an outlier.
 ```{r}
 temp <- data.frame(
   time = wind_speed$valid_time,
-  ts_value = as.numeric(wind_speed$surface_wind),
-  vector_value = c(fit10$threshold, rep(NA, length(wind_speed$surface_wind) - length(fit10$threshold)))  # pad with NA if needed
+  wind_speed = as.numeric(wind_speed$surface_wind),
+  threshold = c(fit10$threshold, rep(NA, length(wind_speed$surface_wind) - length(fit10$threshold)))  # pad with NA if needed
 )
 
-ggplot(temp[1:2000, ], aes(x = time)) +
-  geom_line(aes(y = ts_value), color = "blue") +
-  geom_line(aes(y = vector_value), color = "red") +
-  labs(title = "Wind Speeds Plotted with Threshold Selection", y = "Wind Speed (m/s)") + theme_minimal()
+temp_long = data.frame(
+  time = rep(temp$time[1:2000], 2),
+  y = c(temp$wind_speed[1:2000], temp$threshold[1:2000]),
+  group = rep(c("Surface Wind", "Threshold (95th percentile)"), each = 2000)
+)
+
+ggplot(temp_long, aes(x = time, y = y, color = group)) +
+  geom_line() +
+  labs(title = "Wind Speeds Plotted with Threshold Selection (First 2000 days)", color = "Legend", 
+       x = "Time", y = "Surface Wind Speed") +
+  theme_minimal() +
+  theme(
+    legend.position = c(0.85, 0.85),  # x and y coordinates inside plot
+    legend.background = element_rect(fill = "white", color = "black")  # optional styling
+  )
 ```
 
 ```{r}
@@ -675,10 +692,20 @@ ci(fit10, return.period = c(2), qcov=v)
 ```
 
 ```{r}
-return.level(fit1, return.period = c(2, 20, 50, 100, 500), do.ci = TRUE)
+return.level(fit1, return.period = c(2, 20, 50, 75, 100), do.ci = TRUE)
 ```
 
+```{r}
+fit1_ci2 = ci(fit1, type="return.level", method="proflik", return.period = 2, xrange = c(11.9, 13), verbose = TRUE)
+fit1_ci20 = ci(fit1, type="return.level", method="proflik", return.period = 20, xrange = c(13, 17), verbose = TRUE)
+fit1_ci50 = ci(fit1, type="return.level", method="proflik", return.period = 50, xrange = c(14, 18), verbose = TRUE)
+fit1_ci75 = ci(fit1, type="return.level", method="proflik", return.period = 75, xrange = c(14, 18), verbose = TRUE)
+fit1_ci100 = ci(fit1, type="return.level", method="proflik", return.period = 100, xrange = c(14.5, 18), verbose = TRUE)
+```
 
+```{r}
+fit1_ci[1]
+```
 
 
 
