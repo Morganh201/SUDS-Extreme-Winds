@@ -22,9 +22,9 @@ library(rmarkdown)
 ```
 
 ```{r}
-tempfit = fevd(surface_wind, temp5, threshold = 6, type = "GP")
+tempfit = fevd(surface_wind, temp5, threshold = 8.5, type = "PP")
 tempfit$results$value
-tempfit = evir::gpd(temp5$surface_wind, threshold = 6, method = "ml")
+tempfit = evir::gpd(temp5$surface_wind, threshold = 0, method = "ml")
 tempfit$nllh.final
 ```
 
@@ -54,7 +54,7 @@ etempgprt <- function(y, wt, parms) {
   
   if(leval){
 
-    fit=try(fevd(y, threshold = threshold, type = "PP"),silent = TRUE)
+    fit=try(fevd(y, threshold = threshold, type = "PP"), silent = TRUE)
     #Location parameter
     lo=fit$results$par[1]
     #Shape parameter
@@ -62,7 +62,7 @@ etempgprt <- function(y, wt, parms) {
     #Scale parameter
     sc=fit$results$par[3]
     #Negative log-likelihood plus ten times the number of observation
-    rss=fit$results$value
+    rss=fit$results$value + 10*length(y)
 
     if(rss<0){
       #Warning if the rss is negative
@@ -246,82 +246,13 @@ GPRT_unpruned=rpart(data = temp5,
 ```
 
 ```{r}
+plot(GPRT_unpruned)
 print(GPRT_unpruned)
 printcp(GPRT_unpruned)
 ```
 
-```{r}
-temp_fit = rpart(formula = surface_wind ~ ., data = temp5, method = "class")
-print(temp_fit)
-```
 
-```{r, warning = FALSE}
-itemp <- function(y, offset, parms, wt) {
-  if (is.matrix(y) && ncol(y) > 1)
-  stop("Matrix response not allowed")
-  if (!missing(parms) && length(parms) > 0)
-  warning("parameter argument ignored")
-  if (length(offset)) y <- y- offset
-  sfun <- function(yval, dev, wt, ylevel, digits ) {
-    paste(" mean=", format(signif(yval, digits)),
-          ", MSE=" , format(signif(dev/wt, digits)), sep = '')
-  }
-  environment(sfun) <- .GlobalEnv
-  list(y = c(y), parms = NULL, numresp = 1, numy = 1, summary = sfun)
-}
 
-etemp <- function(y, wt, parms) {
-  wmean <- sum(y*wt)/sum(wt)
-  rss <- sum(wt*(y-wmean)^2)
-  list(label = wmean, deviance = rss)
-}
-
-stemp <- function(y, wt, x, parms, continuous) {
-  # Center y
-  n <- length(y)
-  y <- y- sum(y*wt)/sum(wt)
-  if (continuous) {
-    # continuous x variable
-    temp <- cumsum(y*wt)[-n]
-    left.wt <- cumsum(wt)[-n]
-    right.wt <- sum(wt)- left.wt
-    lmean <- temp/left.wt
-    rmean <--temp/right.wt
-    goodness <- (left.wt*lmean^2 + right.wt*rmean^2)/sum(wt*y^2)
-    list(goodness = goodness, direction = sign(lmean))
-  } else {
-    # Categorical X variable
-    ux <- sort(unique(x))
-    wtsum <- tapply(wt, x, sum)
-    ysum <- tapply(y*wt, x, sum)
-    means <- ysum/wtsum
-    # For anova splits, we can order the categories by their means
-    # then use the same code as for a non-categorical
-    ord <- order(means)
-    n <- length(ord)
-    temp <- cumsum(ysum[ord])[-n]
-    left.wt <- cumsum(wtsum[ord])[-n]
-    right.wt <- sum(wt)- left.wt
-    lmean <- temp/left.wt
-    rmean <--temp/right.wt
-    list(goodness= (left.wt*lmean^2 + right.wt*rmean^2)/sum(wt*y^2),
-    direction = ux[ord])
-  }
-}
-GPRT_method_xi_in_R_plus=list(eval = etemp, split = stemp, init = itemp)
-GPRT_unpruned=rpart(data = temp5,
-                    formula = surface_wind ~ low.level_wind + jet_stream,
-                    method = GPRT_method_xi_in_R_plus,
-                    #control = rpart.control(cp=0,minsplit=max(dim(data_sample)[1]/20,15), minbucket=max(dim(data_sample)[1]/60,7), maxcompete=0, maxsurrogate=0),
-                    control = rpart.control(cp=0.001, minsplit=50, minbucket=30, 
-                                            maxcompete=0, maxsurrogate=0),
-                    xval=0)
-```
-
-```{r}
-plot(GPRT_unpruned)
-printcp(GPRT_unpruned)
-```
 
 
 

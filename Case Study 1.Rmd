@@ -108,6 +108,12 @@ There are two ways to choose a suitable threshold from these graphs. The first w
 To interpret the last graph, using mathematical proofs we typically choose the value in which the graph starts to be approximately a straight line. The value of 6(billion USD) seems like a good choice. A good choice of threshold $u$ is important in balancing the bias-variance tradeoff, and since we want to get the most data as possible whilst holding true the assumptions of the limiting results of the threshold models, we make this heuristic choice for our threshold.
 
 When calculating the return value, since we are not calculating in blocks of a certain length, we are calculating the $m$-observation return level instead of a return level in years. To instead return an annual return level, we need to calculate the number of observations in a year in the dataset. Since the data has an inconsistant number of observations in every year, we instead calculate the average number of observations per year(in some years there are no hurricanes at all). That number here turns out to be 2.06 per year.
+
+```{r}
+a = damage %>% filter(Dam >= 6)
+length(damage[, 1])
+```
+
 ```{r}
 fitD = fevd(Dam, damage, threshold=6, type="GP", time.units="2.06/year")
 plot(fitD)
