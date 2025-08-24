@@ -25,15 +25,30 @@ library(rattle)
 ```
 
 ```{r}
-clim_wind = read.csv("MPI_qdm_pearson.csv")
-clim_wind$time = as.Date(clim_wind$time)
-clim_wind$Year = year(clim_wind$time)
-clim_wind$Month = month(clim_wind$time)
+clim_wind2000 = unique(clim_wind2000)
+clim_wind2090 = unique(clim_wind2090)
 ```
 
 ```{r}
-clim_wind = clim_wind %>% mutate(day_of_year = yday(time))
-yearly_mean_climatology = clim_wind %>% group_by(day_of_year) %>% 
+clim_wind2000 = read.csv("climate_model2000.csv")
+clim_wind2000$time = as.Date(clim_wind2000$time)
+clim_wind2000$Year = year(clim_wind2000$time)
+clim_wind2000$Month = month(clim_wind2000$time)
+
+clim_wind2000 = clim_wind2000 %>% dplyr::select(-plev, -ncol, -lat, -lon)
+clim_wind2000 = na.omit(clim_wind2000)
+
+clim_wind2090 = read.csv("climate_model2090.csv")
+clim_wind2090$time = as.Date(clim_wind2090$time)
+clim_wind2090$Year = year(clim_wind2090$time)
+clim_wind2090$Month = month(clim_wind2090$time)
+
+clim_wind2090 = clim_wind2090 %>% dplyr::select(-plev, -ncol, -lat, -lon)
+```
+
+```{r, warning=FALSE}
+clim_wind2000 = clim_wind2000 %>% mutate(day_of_year = yday(time))
+yearly_mean_climatology = clim_wind2000 %>% group_by(day_of_year) %>% 
   summarise(mean_wind_speed = mean(surface_wind))
 ggplot(yearly_mean_climatology, aes(x = day_of_year, y = mean_wind_speed)) +
   geom_line(color = "blue") +
@@ -55,7 +70,7 @@ ggplot(yearly_mean_climatology, aes(x = day_of_year, y = mean_wind_speed)) +
 ```
 
 ```{r}
-ggplot(clim_wind, aes(x = day_of_year, y = surface_wind)) + 
+ggplot(clim_wind2000, aes(x = day_of_year, y = surface_wind)) + 
   geom_point(alpha = 0.1) +
   geom_smooth(method = "loess", span = 0.1, color = "blue", size = 1, fill = "lightblue", se = TRUE) +
   labs(title = "LOWESS Smoothing by Day of Year",
@@ -66,7 +81,7 @@ ggplot(clim_wind, aes(x = day_of_year, y = surface_wind)) +
 ```
 
 ```{r}
-yearly_max_climatology = clim_wind %>% group_by(day_of_year) %>% 
+yearly_max_climatology = clim_wind2000 %>% group_by(day_of_year) %>% 
   summarise(max_wind_speed = max(surface_wind))
 ggplot(yearly_max_climatology, aes(x = day_of_year, y = max_wind_speed)) +
   geom_line(color = "blue") +
@@ -88,49 +103,33 @@ ggplot(yearly_max_climatology, aes(x = day_of_year, y = max_wind_speed)) +
 ```
 
 ```{r}
-threshold = quantile(clim_wind$surface_wind, probs = 0.98)
-clim_fit = fevd(surface_wind, clim_wind, threshold = threshold, type = "GP")
+threshrange.plot(clim_wind2000$surface_wind, r = c(7.5, 11), nint = 25)
+mrlplot(clim_wind2000$surface_wind, xlim=c(7.5, 11))
+```
+
+```{r}
+threshold = quantile(clim_wind2000$surface_wind, probs = 0.98)
+threshold2 = quantile(clim_wind2090$surface_wind, probs = 0.98)
+clim_fit = fevd(surface_wind, clim_wind2000, threshold = threshold, type = "GP")
 plot(clim_fit)
 plot(clim_fit, "trace")
 return.level(clim_fit, return.period = c(2, 20, 50, 100, 500), do.ci=TRUE)
-ci(clim_fit, type="return.level", method="proflik", return.period = 500, xrange = c(14, 23), verbose = TRUE)
-```
-
-```{r, warning=FALSE}
-threshrange.plot(clim_wind$surface_wind, r = c(4, 12), nint = 25)
-mrlplot(clim_wind$surface_wind, xlim=c(3, 12))
+ci(clim_fit, type="return.level", method="proflik", return.period = 500, xrange = c(18, 35), verbose = TRUE)
 ```
 
 ```{r}
-clim_fit1 = fevd(surface_wind, clim_wind, threshold = 8, type = "GP")
+clim_fit1 = fevd(surface_wind, clim_wind2090, threshold = threshold2, type = "GP")
 plot(clim_fit1)
 plot(clim_fit1, "trace")
 return.level(clim_fit1, return.period = c(2, 20, 50, 100, 500), do.ci=TRUE)
-return.level(fit1, return.period = c(2, 20, 50, 100, 500), do.ci=TRUE)
-ci(clim_fit1, type="return.level", method="proflik", return.period = 500, xrange = c(15, 23), verbose = TRUE)
+ci(clim_fit1, type="return.level", method="proflik", return.period = 500, xrange = c(17, 29), verbose = TRUE)
 ```
 
 ```{r}
-emp_cdf = ecdf(clim_wind$surface_wind)
-cdf_value = emp_cdf(8.5)
-atdf(clim_wind$surface_wind, cdf_value)
-```
-
-```{r}
-extreme_winds = clim_wind %>% filter(surface_wind > 8.5)
-extreme_winds = subset(extreme_winds, select = -c(X, time, Year, Month, day_of_year))
-regress_anova = rpart(surface_wind ~ ., extreme_winds, method = "anova", 
-                      control = rpart.control(cp=0, minsplit=5, minbucket=5, maxcompete=0, maxsurrogate=0))
-regress_anova_prune = prune(regress_anova, cp = 0.032)
-#rpart.plot(regress_anova, branch = 0.3)
-rpart.plot(regress_anova_prune, branch = 0.3, compress = TRUE)
-printcp(regress_anova_prune)
-```
-
-```{r}
-yearly_max_climatology_hist = wind_speed %>% group_by(day_of_year) %>% 
+yearly_max_climatology_hist = clim_wind2000 %>% group_by(day_of_year) %>% 
   summarise(max_wind_speed = max(surface_wind))
-yearly_max_climatology_future = clim_wind %>% group_by(day_of_year) %>% 
+clim_wind2090 = clim_wind2090 %>% mutate(day_of_year = yday(time))
+yearly_max_climatology_future = clim_wind2090 %>% group_by(day_of_year) %>% 
   summarise(max_wind_speed = max(surface_wind))
 
 temp <- data.frame(
@@ -142,7 +141,7 @@ temp <- data.frame(
 temp_long = data.frame(
   time = rep(temp$time, 2),
   y = c(temp$hist, temp$future),
-  group = rep(c("Historical (1979-2020)", "Future (2025-2066)"), each = 366)
+  group = rep(c("Historical (2000s)", "Future (2090s)"), each = 366)
 )
 
 ggplot(temp_long, aes(x = time, y = y, color = group)) +
@@ -169,12 +168,8 @@ ggplot(temp_long, aes(x = time, y = y, color = group)) +
 ```
 
 ```{r}
-temp = subset(wind_speed, select = -c(pressure_level, latitude, longitude, valid_time, Year, 
-                                      Month, day_of_year, summer_index, cluster1, cluster2, cluster3,
-                                      cluster4, cluster5, cluster6))
-temp1 = subset(clim_wind, select = -c(X, Year, Month, day_of_year, time))
-temp = temp %>% rename(low_level_wind = low.level_wind) %>% mutate(period = "Historical")
-temp1 = temp1 %>% mutate(period = "Future")
+temp = clim_wind2000 %>% mutate(period = "Historical") %>% filter(surface_wind > 10.5)
+temp1 = clim_wind2090 %>% mutate(period = "Future") %>% filter(surface_wind > 10.5)
 combined = rbind(temp, temp1)
 ggplot(combined, aes(x = surface_wind, fill = period)) +
   geom_density(alpha=0.4) + 
@@ -191,7 +186,617 @@ wilcox.test(temp$surface_wind, temp1$surface_wind,
             exact = TRUE)
 ```
 
+```{r}
+extreme_winds2000 = clim_wind2000 %>% filter(surface_wind > 8)
+extreme_winds2090 = clim_wind2090 %>% filter(surface_wind > 8)
 
+monthly_mean1 = extreme_winds2000 %>% group_by(Month) %>% summarise(mean1 = mean(surface_wind), 
+                                                                    median1 = median(surface_wind))
+monthly_mean2 = extreme_winds2090 %>% group_by(Month) %>% summarise(mean2 = mean(surface_wind), 
+                                                                    median2 = median(surface_wind))
+monthly_diff <- left_join(monthly_mean1, monthly_mean2, by = "Month") %>%
+  mutate(diff_mean = mean1 - mean2, diff_median = median1 - median2)
+
+extreme_winds2000$Month <- factor(month.abb[extreme_winds2000$Month], levels = month.abb)
+extreme_winds2090$Month <- factor(month.abb[extreme_winds2090$Month], levels = month.abb)
+month_colors <- c(
+  "Jan" = "#1F78B4",  # Deep winter blue
+  "Feb" = "#4DA6FF",  # Frosty blue
+  "Mar" = "#A6CEE3",  # Icy sky blue
+  "Apr" = "#B2DF8A",  # Early spring green
+  "May" = "#FFFF99",  # Pale yellow
+  "Jun" = "#FDBF6F",  # Warm golden orange
+  "Jul" = "#FB8072",  # Coral red
+  "Aug" = "#E31A1C",  # Fiery red
+  "Sep" = "#FF7F00",  # Harvest orange
+  "Oct" = "#FFB347",   # Light pumpkin orange
+  "Nov" = "#D8BFD8",   # Soft thistle purple
+  "Dec" = "#1F78B4"   # Back to winter blue
+)
+
+
+# Plot boxplots 2000
+ggplot(extreme_winds2000, aes(x = factor(Month), y = surface_wind, fill = factor(Month))) + geom_boxplot() +
+  labs(title = "Extreme Wind Speeds above 8 m/s in Toronto (2000)",
+       x = "Month",
+       y = "Wind Speed (m/s)") +
+  scale_fill_manual(values = month_colors) + 
+  theme_minimal()
+
+# Plot boxplots 2090
+ggplot(extreme_winds2090, aes(x = factor(Month), y = surface_wind, fill = factor(Month))) + geom_boxplot() +
+  labs(title = "Extreme Wind Speeds above 8 m/s in Toronto (2090)",
+       x = "Month",
+       y = "Wind Speed (m/s)") +
+  scale_fill_manual(values = month_colors) + 
+  theme_minimal()
+
+ggplot(monthly_diff, aes(x = Month)) +
+  geom_line(aes(y = diff_mean, color = "Mean"), size = 1) +
+  geom_line(aes(y = diff_median, color = "Median"), size = 1) +
+  geom_point(aes(y = diff_mean), size = 2) +
+  geom_point(aes(y = diff_median), size = 2) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  labs(title = "Monthly Extreme Wind Speed Mean and Median Difference",
+       x = "Month",
+       y = "Mean Difference (2000 - 2090)") +
+  scale_x_continuous(breaks = 1:12) +
+  theme_minimal()
+```
+
+```{r}
+#ANOVA
+extreme_winds2000 = extreme_winds2000 %>% mutate(source = "2000")
+extreme_winds2090 = extreme_winds2090 %>% mutate(source = "2090")
+combined_data = bind_rows(extreme_winds2000, extreme_winds2090)
+
+anova_results <- combined_data %>%
+  group_by(Month) %>%
+  group_map(~ aov(surface_wind ~ source, data = .x), .keep = TRUE)
+
+anova_list <- lapply(anova_results, summary)
+names(anova_list) <- unique(combined_data$Month)
+anova_list
+
+# Wilcoxon signed-rank test
+wilcox_results <- combined_data %>%
+  group_by(Month) %>%
+  group_map(~ wilcox.test(surface_wind ~ source, data = .x, alternative = "less"), .keep = TRUE)
+p_values <- sapply(wilcox_results, function(x) x$p.value)
+
+wilcox_summary <- data.frame(
+  month = unique(combined_data$Month),
+  p_value = p_values
+)
+wilcox_summary = wilcox_summary %>% mutate(significance = case_when(p_value < 0.05 ~ 1,
+                                                                    TRUE ~ 0))
+wilcox_summary
+```
+
+
+```{r}
+extreme_winds2000 = clim_wind2000 %>% filter(surface_wind > 8)
+extreme_winds2000 = extreme_winds2000 %>% mutate(summer_index = case_when(Month %in% c(6, 7, 8) ~ 1,
+                                                      TRUE ~ 0))
+extreme_winds2000 = extreme_winds2000 %>% dplyr::select(-time, -Year, -Month, -day_of_year)
+
+extreme_winds2090 = clim_wind2090 %>% filter(surface_wind > 8)
+extreme_winds2090 = extreme_winds2090 %>% mutate(summer_index = case_when(Month %in% c(6, 7, 8) ~ 1,
+                                                      TRUE ~ 0))
+extreme_winds2090 = extreme_winds2090 %>% dplyr::select(-time, -Year, -Month, -day_of_year)
+```
+
+```{r}
+regress_anova2000 = rpart(surface_wind ~ ., extreme_winds2000, method = "anova", 
+                      control = rpart.control(cp=0, minsplit=25, minbucket=15, maxcompete=0, maxsurrogate=0))
+regress_anova_prune2000 = prune(regress_anova2000, cp = 0.019)
+rpart.plot(regress_anova_prune2000, branch = 0.3, compress = TRUE, extra = 101)
+
+regress_anova2090 = rpart(surface_wind ~ ., extreme_winds2090, method = "anova", 
+                      control = rpart.control(cp=0, minsplit=25, minbucket=15, maxcompete=0, maxsurrogate=0))
+regress_anova_prune2090 = prune(regress_anova2090, cp = 0.018)
+rpart.plot(regress_anova_prune2090, branch = 0.3, compress = TRUE, extra = 101)
+```
+
+```{r}
+clim_wind2000 = clim_wind2000 %>% mutate(cluster1 = case_when(low.level.wind >= 12 & atmos_stability1 >= 0.0014 & low.level.wind < 21 ~ 1,
+                                              TRUE ~ 0),
+                         cluster2 = case_when(low.level.wind >= 21 & atmos_stability1 >= 0.0052 ~ 1,
+                                              TRUE ~ 0),
+                         cluster3 = case_when(atmos_stability1 >= 0.0014 & low.level.wind >= 21 & atmos_stability1 < 0.0052 & low.level.wind < 28 ~ 1,
+                                              TRUE ~ 0),
+                         cluster4 = case_when(atmos_stability1 >= 0.0014 & low.level.wind >= 21 & atmos_stability1 < 0.0052 & low.level.wind >= 28 ~ 1,
+                                              TRUE ~ 0),
+                         cluster5 = case_when(low.level.wind >= 12 & atmos_stability1 < 0.0014 & low.level.wind < 18 ~ 1,
+                                              TRUE ~ 0),
+                         cluster6 = case_when(atmos_stability1 < 0.0014 & low.level.wind >= 18 ~ 1,
+                                              TRUE ~ 0))
+```
+
+```{r}
+cluster0 = clim_wind2000 %>% filter(low.level.wind < 12)
+cluster1 = clim_wind2000 %>% filter(cluster1 == 1)
+cluster2 = clim_wind2000 %>% filter(cluster2 == 1)
+cluster3 = clim_wind2000 %>% filter(cluster3 == 1)
+cluster4 = clim_wind2000 %>% filter(cluster4 == 1)
+cluster5 = clim_wind2000 %>% filter(cluster5 == 1)
+cluster6 = clim_wind2000 %>% filter(cluster6 == 1)
+
+prob = 0.95
+t0 = quantile(cluster0$surface_wind, prob = prob)
+t1 = quantile(cluster1$surface_wind, prob = prob)
+t2 = quantile(cluster2$surface_wind, prob = prob)
+t3 = quantile(cluster3$surface_wind, prob = prob)
+t4 = quantile(cluster4$surface_wind, prob = prob)
+t5 = quantile(cluster5$surface_wind, prob = prob)
+t6 = 12
+x = c(1, 2, 3, 4, 5, 6, 7)
+threshold = c(t0, t1, t2, t3, t4, t5, t6)
+temp = data.frame(x, threshold)
+
+ggplot(temp, aes(x = x, y = threshold)) +
+  geom_point(color = "darkgreen", size = 3) + geom_line() +
+  labs(title = "Threshold Selection for each Cluster", x = "Cluster Index", 
+       y = "Threshold (95th Percentile Winds)") +
+  scale_x_continuous(breaks = 1:7) + 
+  theme_minimal()
+```
+
+```{r, warning=FALSE}
+fit1 = fevd(surface_wind, clim_wind2000, threshold = c(t0, t1-t0, t2-t0, t3-t0, t4-t0, t5-t0, t6-t0), 
+            threshold.fun = ~ cluster1 + cluster2 + cluster3 + cluster4 + cluster5 + cluster6, type="PP")
+fit2 = fevd(surface_wind, clim_wind2000, threshold = c(t0, t1-t0, t2-t0, t3-t0, t4-t0, t5-t0, t6-t0), 
+            threshold.fun = ~ cluster1 + cluster2 + cluster3 + cluster4 + cluster5 + cluster6, 
+            location.fun = ~ cluster1 + cluster2 + cluster3 + cluster4 + cluster5 + cluster6, type="PP")
+fit3 = fevd(surface_wind, clim_wind2000, threshold = c(t0, t1-t0, t2-t0, t3-t0, t4-t0, t5-t0, t6-t0), 
+            threshold.fun = ~ cluster1 + cluster2 + cluster3 + cluster4 + cluster5 + cluster6, 
+            location.fun = ~ cluster1 + cluster2 + cluster3 + cluster4 + cluster5 + cluster6, 
+            scale.fun = ~ cluster1 + cluster2 + cluster3 + cluster4 + cluster5 + cluster6, use.phi = TRUE, type="PP")
+fit4 = fevd(surface_wind, clim_wind2000, threshold = c(t0, t1-t0, t2-t0, t3-t0, t4-t0, t5-t0, t6-t0), 
+            threshold.fun = ~ cluster1 + cluster2 + cluster3 + cluster4 + cluster5 + cluster6, 
+            location.fun = ~ cluster1 + cluster2 + cluster3 + cluster4 + cluster5 + cluster6, 
+            shape.fun = ~ cluster1 + cluster2 + cluster3 + cluster4 + cluster5 + cluster6, type="PP")
+lr.test(fit1, fit2)
+lr.test(fit2, fit3)
+lr.test(fit2, fit4)
+plot(fit1)
+plot(fit2)
+plot(fit3)
+plot(fit4)
+```
+
+```{r}
+v = make.qcov(fit3, vals = list(threshold = c(t0, t1-t0, t2-t0, t3-t0, t4-t0, t5-t0, t6-t0),
+                                mu1 = c(0, 1, 0, 0, 0, 0, 0),
+                                mu2 = c(0, 0, 1, 0, 0, 0, 0),
+                                mu3 = c(0, 0, 0, 1, 0, 0, 0),
+                                mu4 = c(0, 0, 0, 0, 1, 0, 0),
+                                mu5 = c(0, 0, 0, 0, 0, 1, 0),
+                                mu6 = c(0, 0, 0, 0, 0, 0, 1),
+                                phi1 = c(0, 1, 0, 0, 0, 0, 0),
+                                phi2 = c(0, 0, 1, 0, 0, 0, 0),
+                                phi3 = c(0, 0, 0, 1, 0, 0, 0),
+                                phi4 = c(0, 0, 0, 0, 1, 0, 0),
+                                phi5 = c(0, 0, 0, 0, 0, 1, 0),
+                                phi6 = c(0, 0, 0, 0, 0, 0, 1)))
+return.level(fit3, return.period = c(2, 20, 50, 75, 100), qcov=v)
+```
+
+```{r}
+set.seed(123)
+boot_function = function(data, return_period) {
+  sample_data = data[sample(1:nrow(data), replace = TRUE), ]
+  cluster0 = sample_data %>% filter(low.level.wind < 18)
+  cluster1 = sample_data %>% filter(cluster1 == 1)
+  cluster2 = sample_data %>% filter(cluster2 == 1)
+  cluster3 = sample_data %>% filter(cluster3 == 1)
+  cluster4 = sample_data %>% filter(cluster4 == 1)
+  cluster5 = sample_data %>% filter(cluster5 == 1)
+  cluster6 = sample_data %>% filter(cluster6 == 1)
+
+  prob = 0.95
+  t0 = quantile(cluster0$surface_wind, prob = prob)
+  t1 = quantile(cluster1$surface_wind, prob = prob)
+  t2 = quantile(cluster2$surface_wind, prob = prob)
+  t3 = quantile(cluster3$surface_wind, prob = prob)
+  t4 = quantile(cluster4$surface_wind, prob = prob)
+  t5 = quantile(cluster5$surface_wind, prob = prob)
+  t6 = quantile(cluster6$surface_wind, prob = prob)
+  
+  fit = fevd(surface_wind, sample_data, threshold = c(t0, t1-t0, t2-t0, t3-t0, t4-t0, t5-t0, t6-t0), 
+            threshold.fun = ~ cluster1 + cluster2 + cluster3 + cluster4 + cluster5 + cluster6, 
+            location.fun = ~ cluster1 + cluster2 + cluster3 + cluster4 + cluster5 + cluster6, type="PP")
+  v = make.qcov(fit, vals = list(threshold = c(t0, t1-t0, t2-t0, t3-t0, t4-t0, t5-t0, t6-t0),
+                                mu1 = c(0, 1, 0, 0, 0, 0, 0),
+                                mu2 = c(0, 0, 1, 0, 0, 0, 0),
+                                mu3 = c(0, 0, 0, 1, 0, 0, 0),
+                                mu4 = c(0, 0, 0, 0, 1, 0, 0),
+                                mu5 = c(0, 0, 0, 0, 0, 1, 0),
+                                mu6 = c(0, 0, 0, 0, 0, 0, 1),
+                                phi1 = c(0, 1, 0, 0, 0, 0, 0),
+                                phi2 = c(0, 0, 1, 0, 0, 0, 0),
+                                phi3 = c(0, 0, 0, 1, 0, 0, 0),
+                                phi4 = c(0, 0, 0, 0, 1, 0, 0),
+                                phi5 = c(0, 0, 0, 0, 0, 1, 0),
+                                phi6 = c(0, 0, 0, 0, 0, 0, 1)))
+  return(return.level(fit, return.period = c(return_period), qcov=v))
+}
+
+library(doParallel)
+
+cl <- makeCluster(4)
+registerDoParallel(cl)
+
+results <- foreach(i = c(2, 20, 50, 75, 100), .combine = rbind, 
+                   .packages = c("dplyr", "extRemes")) %dopar% {
+  replicate(1000, boot_function(clim_wind2000, i))
+}
+
+stopCluster(cl)
+```
+
+```{r}
+rl2_cluster0 = results[1, ][seq(1, length(results[1, ]), by = 7)]
+rl2_cluster1 = results[1, ][seq(2, length(results[1, ]), by = 7)]
+rl2_cluster2 = results[1, ][seq(3, length(results[1, ]), by = 7)]
+rl2_cluster3 = results[1, ][seq(4, length(results[1, ]), by = 7)]
+rl2_cluster4 = results[1, ][seq(5, length(results[1, ]), by = 7)]
+rl2_cluster5 = results[1, ][seq(6, length(results[1, ]), by = 7)]
+rl2_cluster6 = results[1, ][seq(7, length(results[1, ]), by = 7)]
+
+rl20_cluster0 = results[2, ][seq(1, length(results[1, ]), by = 7)]
+rl20_cluster1 = results[2, ][seq(2, length(results[1, ]), by = 7)]
+rl20_cluster2 = results[2, ][seq(3, length(results[1, ]), by = 7)]
+rl20_cluster3 = results[2, ][seq(4, length(results[1, ]), by = 7)]
+rl20_cluster4 = results[2, ][seq(5, length(results[1, ]), by = 7)]
+rl20_cluster5 = results[2, ][seq(6, length(results[1, ]), by = 7)]
+rl20_cluster6 = results[2, ][seq(7, length(results[1, ]), by = 7)]
+
+rl50_cluster0 = results[3, ][seq(1, length(results[1, ]), by = 7)]
+rl50_cluster1 = results[3, ][seq(2, length(results[1, ]), by = 7)]
+rl50_cluster2 = results[3, ][seq(3, length(results[1, ]), by = 7)]
+rl50_cluster3 = results[3, ][seq(4, length(results[1, ]), by = 7)]
+rl50_cluster4 = results[3, ][seq(5, length(results[1, ]), by = 7)]
+rl50_cluster5 = results[3, ][seq(6, length(results[1, ]), by = 7)]
+rl50_cluster6 = results[3, ][seq(7, length(results[1, ]), by = 7)]
+
+rl75_cluster0 = results[4, ][seq(1, length(results[1, ]), by = 7)]
+rl75_cluster1 = results[4, ][seq(2, length(results[1, ]), by = 7)]
+rl75_cluster2 = results[4, ][seq(3, length(results[1, ]), by = 7)]
+rl75_cluster3 = results[4, ][seq(4, length(results[1, ]), by = 7)]
+rl75_cluster4 = results[4, ][seq(5, length(results[1, ]), by = 7)]
+rl75_cluster5 = results[4, ][seq(6, length(results[1, ]), by = 7)]
+rl75_cluster6 = results[4, ][seq(7, length(results[1, ]), by = 7)]
+
+rl100_cluster0 = results[5, ][seq(1, length(results[1, ]), by = 7)]
+rl100_cluster1 = results[5, ][seq(2, length(results[1, ]), by = 7)]
+rl100_cluster2 = results[5, ][seq(3, length(results[1, ]), by = 7)]
+rl100_cluster3 = results[5, ][seq(4, length(results[1, ]), by = 7)]
+rl100_cluster4 = results[5, ][seq(5, length(results[1, ]), by = 7)]
+rl100_cluster5 = results[5, ][seq(6, length(results[1, ]), by = 7)]
+rl100_cluster6 = results[5, ][seq(7, length(results[1, ]), by = 7)]
+```
+
+```{r}
+lower_ci2 = c(quantile(rl2_cluster0, 0.025), quantile(rl2_cluster1, 0.025), quantile(rl2_cluster2, 0.025), 
+              quantile(rl2_cluster3, 0.025), quantile(rl2_cluster4, 0.025), quantile(rl2_cluster5, 0.025),
+              quantile(rl2_cluster6, 0.025))
+upper_ci2 = c(quantile(rl2_cluster0, 0.975), quantile(rl2_cluster1, 0.975), quantile(rl2_cluster2, 0.975), 
+              quantile(rl2_cluster3, 0.975), quantile(rl2_cluster4, 0.975), quantile(rl2_cluster5, 0.975),
+              quantile(rl2_cluster6, 0.975))
+
+lower_ci20 = c(quantile(rl20_cluster0, 0.025), quantile(rl20_cluster1, 0.025), quantile(rl20_cluster2, 0.025), 
+              quantile(rl20_cluster3, 0.025), quantile(rl20_cluster4, 0.025), quantile(rl20_cluster5, 0.025),
+              quantile(rl20_cluster6, 0.025))
+upper_ci20 = c(quantile(rl20_cluster0, 0.975), quantile(rl20_cluster1, 0.975), quantile(rl20_cluster2, 0.975), 
+              quantile(rl20_cluster3, 0.975), quantile(rl20_cluster4, 0.975), quantile(rl20_cluster5, 0.975),
+              quantile(rl20_cluster6, 0.975))
+
+lower_ci50 = c(quantile(rl50_cluster0, 0.025), quantile(rl50_cluster1, 0.025), quantile(rl50_cluster2, 0.025), 
+              quantile(rl50_cluster3, 0.025), quantile(rl50_cluster4, 0.025), quantile(rl50_cluster5, 0.025),
+              quantile(rl50_cluster6, 0.025))
+upper_ci50 = c(quantile(rl50_cluster0, 0.975), quantile(rl50_cluster1, 0.975), quantile(rl50_cluster2, 0.975), 
+              quantile(rl50_cluster3, 0.975), quantile(rl50_cluster4, 0.975), quantile(rl50_cluster5, 0.975),
+              quantile(rl50_cluster6, 0.975))
+
+lower_ci75 = c(quantile(rl75_cluster0, 0.025), quantile(rl75_cluster1, 0.025), quantile(rl75_cluster2, 0.025), 
+              quantile(rl75_cluster3, 0.025), quantile(rl75_cluster4, 0.025), quantile(rl75_cluster5, 0.025),
+              quantile(rl75_cluster6, 0.025))
+upper_ci75 = c(quantile(rl75_cluster0, 0.975), quantile(rl75_cluster1, 0.975), quantile(rl75_cluster2, 0.975), 
+              quantile(rl75_cluster3, 0.975), quantile(rl75_cluster4, 0.975), quantile(rl75_cluster5, 0.975),
+              quantile(rl75_cluster6, 0.975))
+
+lower_ci100 = c(quantile(rl100_cluster0, 0.025), quantile(rl100_cluster1, 0.025), quantile(rl100_cluster2, 0.025), 
+              quantile(rl100_cluster3, 0.025), quantile(rl100_cluster4, 0.025), quantile(rl100_cluster5, 0.025),
+              quantile(rl100_cluster6, 0.025))
+upper_ci100 = c(quantile(rl100_cluster0, 0.975), quantile(rl100_cluster1, 0.975), quantile(rl100_cluster2, 0.975), 
+              quantile(rl100_cluster3, 0.975), quantile(rl100_cluster4, 0.975), quantile(rl100_cluster5, 0.975),
+              quantile(rl100_cluster6, 0.975))
+```
+
+
+```{r}
+temp = return.level(fit3, return.period = c(2, 20, 50, 75, 100), qcov=v)
+temp1 = data.frame(
+  x = rep(1:7, 5),
+  y = c(temp[, 1], temp[, 2], temp[, 3], temp[, 4], temp[, 5]),
+  group = rep(c("2 year Return Period", "20 year Return Period", "50 year Return Period",
+                "75 year Return Period", "100 year Return Period"), each = 7),
+  lower_ci = c(lower_ci2, lower_ci20, lower_ci50, lower_ci75, lower_ci100),
+  upper_ci = c(upper_ci2, upper_ci20, upper_ci50, upper_ci75, upper_ci100)
+)
+
+temp1$group = factor(temp1$group, levels = c("2 year Return Period", "20 year Return Period", 
+                                             "50 year Return Period", "75 year Return Period", 
+                                             "100 year Return Period"))
+
+ggplot(temp1, aes(x = x, y = y, group = group)) +
+  geom_ribbon(aes(ymin = lower_ci, ymax = upper_ci, fill = group), alpha = 0.1) +
+  geom_line(aes(color = group), size = 0.7) +
+  labs(title = "Bootstrapped Conditional Return Level Plot", x = "Cluster Index", y = "Wind Speed (m/s)", 
+       fill = "Return Period", color = "Return Period") +
+  scale_x_continuous(breaks = 1:7) +
+  theme_minimal() + 
+  theme(
+    legend.position = c(0.15, 0.85),  # x and y coordinates inside plot
+    legend.background = element_rect(fill = "white", color = "black")  # optional styling
+  )
+```
+
+```{r}
+clusters = c(1, 2, 3, 4, 5, 6, 7)
+prop_0 = 1 - mean(clim_wind2000$cluster1) - mean(clim_wind2000$cluster2) -
+  mean(clim_wind2000$cluster3) - mean(clim_wind2000$cluster4) - 
+  mean(clim_wind2000$cluster5) - mean(clim_wind2000$cluster6)
+prop = c(prop_0, mean(clim_wind2000$cluster1), mean(clim_wind2000$cluster2),
+         mean(clim_wind2000$cluster3), mean(clim_wind2000$cluster4),
+         mean(clim_wind2000$cluster5), mean(clim_wind2000$cluster6))
+
+cond_rl = function(z, k, fit) {
+  params = fit$results$par
+  if(k != 1) {
+    mu = params["mu0"] + params[k]
+    sigma = exp(params["phi0"] + params[7+k])
+  } else {
+    mu = params["mu0"]
+    sigma = exp(params['phi0'])
+  }
+  xi = params["shape"]
+  return(1 - pevd(z, loc = mu, scale = sigma, shape = xi, threshold = threshold[k], type = "PP"))
+}
+
+joint_rl = function(z, fit) {
+  return(sum(prop * sapply(clusters, function(clusters) cond_rl(z, clusters, fit))))
+}
+
+return_period = 100
+uniroot(function(z) joint_rl(z, fit3) - 1/return_period, lower = 0, upper = 100)$root
+```
+
+```{r, warning=FALSE}
+library(doParallel)
+
+cl <- makeCluster(4)
+registerDoParallel(cl)
+
+bootstrap_joint_rl = function(data, return_period) {
+  sample_data = data[sample(1:nrow(data), replace = TRUE), ]
+  prop_0 = 1 - mean(sample_data$cluster1) - mean(sample_data$cluster2) - mean(sample_data$cluster3) - 
+     mean(sample_data$cluster4) - mean(sample_data$cluster5) - mean(sample_data$cluster6)
+  prop = c(prop_0, mean(sample_data$cluster1), mean(sample_data$cluster2), mean(sample_data$cluster3),
+         mean(sample_data$cluster4), mean(sample_data$cluster5), mean(sample_data$cluster6))
+  
+  cluster0 = sample_data %>% filter(low.level.wind < 12)
+  cluster1 = sample_data %>% filter(cluster1 == 1)
+  cluster2 = sample_data %>% filter(cluster2 == 1)
+  cluster3 = sample_data %>% filter(cluster3 == 1)
+  cluster4 = sample_data %>% filter(cluster4 == 1)
+  cluster5 = sample_data %>% filter(cluster5 == 1)
+  cluster6 = sample_data %>% filter(cluster6 == 1)
+
+  prob = 0.95
+  t0 = quantile(cluster0$surface_wind, prob = prob)
+  t1 = quantile(cluster1$surface_wind, prob = prob)
+  t2 = quantile(cluster2$surface_wind, prob = prob)
+  t3 = quantile(cluster3$surface_wind, prob = prob)
+  t4 = quantile(cluster4$surface_wind, prob = prob)
+  t5 = quantile(cluster5$surface_wind, prob = prob)
+  t6 = quantile(cluster6$surface_wind, prob = prob)
+  fit = fevd(surface_wind, sample_data, threshold = c(t0, t1-t0, t2-t0, t3-t0, t4-t0, t5-t0, t6-t0), 
+            threshold.fun = ~ cluster1 + cluster2 + cluster3 + cluster4 + cluster5 + cluster6, 
+            location.fun = ~ cluster1 + cluster2 + cluster3 + cluster4 + cluster5 + cluster6, 
+            scale.fun = ~ cluster1 + cluster2 + cluster3 + cluster4 + cluster5 + cluster6, use.phi = TRUE, type="PP")
+  
+  clusters = 1:7
+  return(uniroot(function(z) joint_rl(z, fit) - 1/return_period, lower = 0, upper = 100)$root)
+}
+
+results2000 <- foreach(i = c(2, 20, 50, 75, 100), .combine = rbind, 
+                   .packages = c("dplyr", "extRemes")) %dopar% {
+  replicate(1000, bootstrap_joint_rl(clim_wind2000, i))
+}
+
+stopCluster(cl)
+```
+
+```{r}
+temp = results2000
+lower_ci = c(quantile(temp[1, ], prob = 0.025), quantile(temp[2, ], prob = 0.025), 
+             quantile(temp[3, ], prob = 0.025), quantile(temp[4, ], prob = 0.025),
+             quantile(temp[5, ], prob = 0.025))
+upper_ci = c(quantile(temp[1, ], prob = 0.975), quantile(temp[2, ], prob = 0.975), 
+             quantile(temp[3, ], prob = 0.975), quantile(temp[4, ], prob = 0.975),
+             quantile(temp[5, ], prob = 0.975))
+estimate = c(uniroot(function(z) joint_rl(z, fit3) - 1/(2), lower = 0, upper = 100)$root,
+             uniroot(function(z) joint_rl(z, fit3) - 1/(20), lower = 0, upper = 100)$root,
+             uniroot(function(z) joint_rl(z, fit3) - 1/(50), lower = 0, upper = 100)$root,
+             uniroot(function(z) joint_rl(z, fit3) - 1/(75), lower = 0, upper = 100)$root,
+             uniroot(function(z) joint_rl(z, fit3) - 1/(100), lower = 0, upper = 100)$root)
+temp_df = data.frame(
+  return_period = c(2, 20, 50, 75, 100),
+  lower_ci = lower_ci, 
+  upper_ci = upper_ci,
+  estimate = estimate
+)
+temp_df
+```
+
+Climate Model 2090
+```{r}
+clim_wind2090 = clim_wind2090 %>% mutate(cluster1 = case_when(low.level.wind >= 12 & atmos_stability1 >= 0.0019 & low.level.wind < 21 ~ 1,
+                                              TRUE ~ 0),
+                         cluster2 = case_when(low.level.wind >= 21 & atmos_stability1 >= 0.0019 ~ 1,
+                                              TRUE ~ 0),
+                         cluster3 = case_when(low.level.wind >= 12 & atmos_stability1 < 0.0019 & low.level.wind < 16 ~ 1,
+                                              TRUE ~ 0),
+                         cluster4 = case_when(low.level.wind >= 16 & atmos_stability1 < 0.0019 & low.level.wind < 22 & atmos_stability1 >= 941e-6 ~ 1,
+                                              TRUE ~ 0),
+                         cluster5 = case_when(low.level.wind >= 16 & low.level.wind < 22 & atmos_stability1 < 941e-6 ~ 1,
+                                              TRUE ~ 0),
+                         cluster6 = case_when(low.level.wind >= 22 & atmos_stability1 < 0.0019 ~ 1,
+                                              TRUE ~ 0))
+```
+
+```{r}
+cluster0 = clim_wind2090 %>% filter(low.level.wind < 12)
+cluster1 = clim_wind2090 %>% filter(cluster1 == 1)
+cluster2 = clim_wind2090 %>% filter(cluster2 == 1)
+cluster3 = clim_wind2090 %>% filter(cluster3 == 1)
+cluster4 = clim_wind2090 %>% filter(cluster4 == 1)
+cluster5 = clim_wind2090 %>% filter(cluster5 == 1)
+cluster6 = clim_wind2090 %>% filter(cluster6 == 1)
+
+prob = 0.95
+t0 = quantile(cluster0$surface_wind, prob = prob)
+t1 = quantile(cluster1$surface_wind, prob = prob)
+t2 = quantile(cluster2$surface_wind, prob = prob)
+t3 = quantile(cluster3$surface_wind, prob = prob)
+t4 = quantile(cluster4$surface_wind, prob = prob)
+t5 = quantile(cluster5$surface_wind, prob = prob)
+t6 = quantile(cluster6$surface_wind, prob = prob)
+x = c(1, 2, 3, 4, 5, 6, 7)
+threshold = c(t0, t1, t2, t3, t4, t5, t6)
+temp = data.frame(x, threshold)
+
+ggplot(temp, aes(x = x, y = threshold)) +
+  geom_point(color = "darkgreen", size = 3) + geom_line() +
+  labs(title = "Threshold Selection for each Cluster", x = "Cluster Index", 
+       y = "Threshold (95th Percentile Winds)") +
+  scale_x_continuous(breaks = 1:7) + 
+  theme_minimal()
+```
+
+```{r, warning=FALSE}
+fit5 = fevd(surface_wind, clim_wind2090, threshold = c(t0, t1-t0, t2-t0, t3-t0, t4-t0, t5-t0, t6-t0), 
+            threshold.fun = ~ cluster1 + cluster2 + cluster3 + cluster4 + cluster5 + cluster6, type="PP")
+fit6 = fevd(surface_wind, clim_wind2090, threshold = c(t0, t1-t0, t2-t0, t3-t0, t4-t0, t5-t0, t6-t0), 
+            threshold.fun = ~ cluster1 + cluster2 + cluster3 + cluster4 + cluster5 + cluster6, 
+            location.fun = ~ cluster1 + cluster2 + cluster3 + cluster4 + cluster5 + cluster6, type="PP")
+fit7 = fevd(surface_wind, clim_wind2090, threshold = c(t0, t1-t0, t2-t0, t3-t0, t4-t0, t5-t0, t6-t0), 
+            threshold.fun = ~ cluster1 + cluster2 + cluster3 + cluster4 + cluster5 + cluster6, 
+            location.fun = ~ cluster1 + cluster2 + cluster3 + cluster4 + cluster5 + cluster6, 
+            scale.fun = ~ cluster1 + cluster2 + cluster3 + cluster4 + cluster5 + cluster6, use.phi = TRUE, type="PP")
+fit8 = fevd(surface_wind, clim_wind2090, threshold = c(t0, t1-t0, t2-t0, t3-t0, t4-t0, t5-t0, t6-t0), 
+            threshold.fun = ~ cluster1 + cluster2 + cluster3 + cluster4 + cluster5 + cluster6, 
+            location.fun = ~ cluster1 + cluster2 + cluster3 + cluster4 + cluster5 + cluster6, 
+            shape.fun = ~ cluster1 + cluster2 + cluster3 + cluster4 + cluster5 + cluster6, type="PP")
+lr.test(fit5, fit6)
+lr.test(fit6, fit7)
+lr.test(fit6, fit8)
+plot(fit5)
+plot(fit6)
+plot(fit7)
+plot(fit8)
+```
+
+```{r}
+v = make.qcov(fit7, vals = list(threshold = c(t0, t1-t0, t2-t0, t3-t0, t4-t0, t5-t0, t6-t0),
+                                mu1 = c(0, 1, 0, 0, 0, 0, 0),
+                                mu2 = c(0, 0, 1, 0, 0, 0, 0),
+                                mu3 = c(0, 0, 0, 1, 0, 0, 0),
+                                mu4 = c(0, 0, 0, 0, 1, 0, 0),
+                                mu5 = c(0, 0, 0, 0, 0, 1, 0),
+                                mu6 = c(0, 0, 0, 0, 0, 0, 1),
+                                phi1 = c(0, 1, 0, 0, 0, 0, 0),
+                                phi2 = c(0, 0, 1, 0, 0, 0, 0),
+                                phi3 = c(0, 0, 0, 1, 0, 0, 0),
+                                phi4 = c(0, 0, 0, 0, 1, 0, 0),
+                                phi5 = c(0, 0, 0, 0, 0, 1, 0),
+                                phi6 = c(0, 0, 0, 0, 0, 0, 1)))
+return.level(fit7, return.period = c(2, 20, 50, 75, 100), qcov=v)
+```
+
+```{r}
+clusters = c(1, 2, 3, 4, 5, 6, 7)
+prop_0 = 1 - mean(clim_wind2090$cluster1) - mean(clim_wind2090$cluster2) -
+  mean(clim_wind2090$cluster3) - mean(clim_wind2090$cluster4) - 
+  mean(clim_wind2090$cluster5) - mean(clim_wind2090$cluster6)
+prop = c(prop_0, mean(clim_wind2090$cluster1), mean(clim_wind2090$cluster2),
+         mean(clim_wind2090$cluster3), mean(clim_wind2090$cluster4),
+         mean(clim_wind2090$cluster5), mean(clim_wind2090$cluster6))
+
+cond_rl = function(z, k, fit) {
+  params = fit$results$par
+  if(k != 1) {
+    mu = params["mu0"] + params[k]
+    sigma = exp(params["phi0"] + params[7+k])
+  } else {
+    mu = params["mu0"]
+    sigma = exp(params['phi0'])
+  }
+  xi = params["shape"]
+  return(1 - pevd(z, loc = mu, scale = sigma, shape = xi, threshold = threshold[k], type = "PP"))
+}
+
+joint_rl = function(z, fit) {
+  return(sum(prop * sapply(clusters, function(clusters) cond_rl(z, clusters, fit))))
+}
+
+return_period = 100
+uniroot(function(z) joint_rl(z, fit7) - 1/return_period, lower = 0, upper = 100)$root
+```
+
+```{r}
+temp = results2090
+lower_ci = c(quantile(temp[1, ], prob = 0.025), quantile(temp[2, ], prob = 0.025), 
+             quantile(temp[3, ], prob = 0.025), quantile(temp[4, ], prob = 0.025),
+             quantile(temp[5, ], prob = 0.025))
+upper_ci = c(quantile(temp[1, ], prob = 0.975), quantile(temp[2, ], prob = 0.975), 
+             quantile(temp[3, ], prob = 0.975), quantile(temp[4, ], prob = 0.975),
+             quantile(temp[5, ], prob = 0.975))
+estimate2090 = c(uniroot(function(z) joint_rl(z, fit7) - 1/(2), lower = 0, upper = 100)$root,
+             uniroot(function(z) joint_rl(z, fit7) - 1/(20), lower = 0, upper = 100)$root,
+             uniroot(function(z) joint_rl(z, fit7) - 1/(50), lower = 0, upper = 100)$root,
+             uniroot(function(z) joint_rl(z, fit7) - 1/(75), lower = 0, upper = 100)$root,
+             uniroot(function(z) joint_rl(z, fit7) - 1/(100), lower = 0, upper = 100)$root)
+```
+
+```{r}
+overlay_df = data.frame(
+  return_period = c(2, 20, 50, 75, 100),
+  lower_ci = lower_ci, 
+  upper_ci = upper_ci,
+  estimate = estimate2090
+)
+overlay_df
+```
+
+```{r}
+ggplot(temp_df, aes(x = return_period)) + 
+  geom_ribbon(aes(ymin = lower_ci, ymax = upper_ci), fill = "lightblue", alpha = 0.4) +
+  geom_line(aes(y = estimate, color = "2000"), color = "blue", size = 0.8) +
+  geom_point(aes(y = estimate), color = "darkblue", size = 1.5) +
+  geom_ribbon(data = overlay_df, aes(ymin = lower_ci, ymax = upper_ci), fill = "red", alpha = 0.1) +
+  geom_line(data = overlay_df, aes(x = return_period, y = estimate2090, color = "2090"), 
+            color="firebrick", size = 0.8) +
+  geom_point(data = overlay_df, aes(x = return_period, y = estimate2090), color = "darkblue", size = 1.5) +
+  labs(
+    title = "Return Level Plot with 95% Bootstrap Confidence Intervals",
+    x = "Return Period (years)",
+    y = "Wind Speed Return Level (m/s)"
+  ) +
+  theme_minimal()
+```
 
 
 

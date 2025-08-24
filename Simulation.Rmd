@@ -1,0 +1,182 @@
+---
+title: "Simulation"
+output: html_document
+date: "2025-08-13"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+We want to show the bias-variance tradeoff play in action:
+```{r}
+library(extRemes)
+```
+
+```{r}
+samples_frechet = revd(10000, loc = 7, scale = 1, shape = -0.3, type = "GEV")
+samples_frechet = samples_frechet[!samples_frechet %in% sort(samples_frechet, decreasing = TRUE)[1:500]]
+threshold = max(samples_frechet)
+threshold
+
+samples_gp = revd(500, scale = 0.6, shape = -0.1, type = "GP")
+samples_gp = samples_gp + threshold
+sample = c(samples_frechet, samples_gp)
+
+hist(samples_frechet, breaks = 30)
+hist(samples_gp, breaks = 25)
+hist(sample, breaks = 50)
+abline(v = threshold, col = "red", lwd = 2, lty = 2)
+```
+
+```{r, warning = FALSE}
+threshold
+threshrange.plot(sample, r = c(7, 11), nint = 35)
+mrlplot(sample, xlim=c(6, 14))
+```
+
+Bootstrap
+```{r}
+bootstrap_threshmodel = function(data, threshold) {
+  sample_data = data[sample(1:length(data), replace = TRUE)]
+  fit = fevd(sample_data, threshold = threshold, type = "GP")
+  scale = fit$results$par["scale"]
+  shape = fit$results$par["shape"]
+  return(c(scale, shape))
+}
+
+results = replicate(1000, bootstrap_threshmodel(sample, threshold+0.3))
+```
+
+```{r}
+scale = results[1, ]
+shape = results[2, ]
+hist(scale, breaks = 30)
+hist(shape, breaks = 30)
+mean(scale)
+sd(scale)
+mean(shape)
+sd(shape)
+```
+
+Simulation
+```{r, warning=FALSE}
+simu_threshmodel = function() {
+  samples_frechet = revd(10000, loc = 7, scale = 1, shape = -0.3, type = "GEV")
+  samples_frechet = samples_frechet[!samples_frechet %in% sort(samples_frechet, decreasing = TRUE)[1:500]]
+  threshold = max(samples_frechet)
+  
+  samples_gp = revd(500, scale = 0.6, shape = 0, type = "GP")
+  samples_gp = samples_gp + threshold
+  sample = c(samples_frechet, samples_gp)
+  
+  fit = fevd(sample, threshold = 8, type = "GP")
+  scale = fit$results$par["scale"]
+  shape = fit$results$par["shape"]
+  return(c(scale, shape))
+}
+results = replicate(1000, simu_threshmodel())
+```
+
+```{r}
+scale = results[1, ]
+shape = results[2, ]
+hist(scale, breaks = 30)
+hist(shape, breaks = 30)
+mean(scale)
+sd(scale)
+mean(shape)
+sd(shape)
+```
+
+What about threshold stability?
+```{r}
+samples_frechet = revd(10000, loc = 7, scale = 1, shape = -0.3, type = "GEV")
+samples_frechet = samples_frechet[!samples_frechet %in% sort(samples_frechet, decreasing = TRUE)[1:500]]
+threshold1 = max(samples_frechet)
+
+samples_gp = revd(500, scale = 0.6, shape = -0.1, type = "GP")
+samples_gp = samples_gp + threshold1
+col1 = c(samples_frechet, samples_gp)
+
+hist(col1, breaks = 50)
+abline(v = threshold1, col = "red", lwd = 2, lty = 2)
+
+samples_frechet = revd(10000, loc = 2, scale = 0.5, shape = -0.3, type = "GEV")
+samples_frechet = samples_frechet[!samples_frechet %in% sort(samples_frechet, decreasing = TRUE)[1:500]]
+threshold2 = max(samples_frechet)
+
+samples_gp = revd(500, scale = 0.3, shape = -0.1, type = "GP")
+samples_gp = samples_gp + threshold2
+col2 = c(samples_frechet, samples_gp)
+
+hist(col2, breaks = 50)
+abline(v = threshold2, col = "red", lwd = 2, lty = 2)
+```
+
+```{r}
+sample = c(col1, col2)
+hist(sample, breaks = 50)
+
+sample = data.frame(values = col1)
+sample$covariate = 0
+temp = data.frame(values = col2)
+temp$covariate = 1
+sample = rbind(sample, temp)
+sample
+```
+
+```{r, warning=FALSE}
+fit = fevd(values, sample, scale.fun = ~covariate, use.phi = TRUE,
+           threshold = c(threshold1, threshold2 - threshold1), threshold.fun = ~covariate, type = "GP")
+fit
+```
+
+```{r}
+plot(fit)
+```
+
+```{r}
+fit2 = fevd(values, sample, scale.fun = ~covariate, use.phi = TRUE,
+           threshold = c(threshold1 + 0.3, threshold2 - threshold1 + 0.3), threshold.fun = ~covariate, type = "GP")
+fit2
+```
+
+```{r}
+simu1 = function(data, thresh_diff) {
+  sample_data = data[sample(1:nrow(data), replace = TRUE), ]
+  fit = fevd(values, sample_data, scale.fun = ~covariate, use.phi = TRUE,
+           threshold = c(threshold1 + thresh_diff, threshold2 - threshold1), 
+           threshold.fun = ~covariate, type = "GP")
+  phi0 = fit$results$par["phi0"]
+  phi1 = fit$results$par["phi1"]
+  shape = fit$results$par["shape"]
+  return(c(phi0, phi1, shape))
+}
+
+results = replicate(1000, simu1(sample, 0.3))
+```
+
+```{r}
+phi0 = results[1, ]
+phi1 = results[2, ]
+shape = results[3, ]
+hist(phi0, breaks = 30)
+hist(phi1, breaks = 30)
+hist(shape, breaks = 30)
+mean(phi0)
+sd(phi0)
+mean(phi1)
+sd(phi1)
+mean(shape)
+sd(shape)
+```
+
+We check if the results of the regression tree extreme value model is realistic by creating a similar situation using simulations
+```{r}
+
+```
+
+
+
+

@@ -367,6 +367,7 @@ v = make.qcov(fit8, vals = list(threshold = c(9.6, 7.7),
                                 xi1 = c(0, 1)))
 return.level(fit8, return.period = c(2, 20, 50, 100, 500), qcov=v)
 ci(fit8, type="return.level", return.period = 100, qcov = v)
+plot(fit8, "qq")
 ```
 
 ```{r}
@@ -728,6 +729,100 @@ fit1_ci75 = ci(fit1, type="return.level", method="proflik", return.period = 75, 
 fit1_ci100 = ci(fit1, type="return.level", method="proflik", return.period = 100, xrange = c(14.5, 18), verbose = TRUE)
 ```
 
+```{r}
+set.seed(123)
+summer_boot = function(data, return_period) {
+  sample_data = data[sample(1:nrow(data), replace = TRUE), ]
+  non_summer_wind = sample_data %>% filter(summer_index == 0)
+  summer_wind = sample_data %>% filter(summer_index == 1)
+  
+  prob = 0.95
+  t0 = quantile(non_summer_wind$surface_wind, prob = prob)
+  t1 = quantile(summer_wind$surface_wind, prob = prob)
+  fit = fevd(surface_wind, sample_data, threshold = c(t0, t1-t0), threshold.fun = ~ summer_index,
+            location.fun = ~ summer_index, scale.fun = ~ summer_index, use.phi = TRUE, 
+            shape.fun = ~ summer_index, type="PP")
+  v = make.qcov(fit8, vals = list(threshold = c(t0, t1-t0),
+                                mu1 = c(0, 1),
+                                phi1 = c(0, 1),
+                                xi1 = c(0, 1)))
+  return(return.level(fit, return.period = c(return_period), qcov=v))
+}
+
+library(doParallel)
+
+cl <- makeCluster(4)
+registerDoParallel(cl)
+
+results <- foreach(i = c(2, 20, 50, 75, 100), .combine = rbind, 
+                   .packages = c("dplyr", "extRemes")) %dopar% {
+  replicate(1000, summer_boot(wind_speed, i))
+}
+
+stopCluster(cl)
+```
+
+```{r}
+rl_nonsummer_2 = results[1, ][seq(1, length(results[1, ]), by = 2)]
+rl_summer_2 = results[1, ][seq(2, length(results[1, ]), by = 2)]
+rl_nonsummer_20 = results[2, ][seq(1, length(results[2, ]), by = 2)]
+rl_summer_20 = results[2, ][seq(2, length(results[2, ]), by = 2)]
+rl_nonsummer_50 = results[3, ][seq(1, length(results[3, ]), by = 2)]
+rl_summer_50 = results[3, ][seq(2, length(results[3, ]), by = 2)]
+rl_nonsummer_75 = results[4, ][seq(1, length(results[4, ]), by = 2)]
+rl_summer_75 = results[4, ][seq(2, length(results[4, ]), by = 2)]
+rl_nonsummer_100 = results[5, ][seq(1, length(results[5, ]), by = 2)]
+rl_summer_100 = results[5, ][seq(2, length(results[5, ]), by = 2)]
+
+lower_ci2 = c(quantile(rl_nonsummer_2, 0.025), quantile(rl_summer_2, 0.025))
+upper_ci2 = c(quantile(rl_nonsummer_2, 0.975), quantile(rl_summer_2, 0.975))
+
+lower_ci20 = c(quantile(rl_nonsummer_20, 0.025), quantile(rl_summer_20, 0.025))
+upper_ci20 = c(quantile(rl_nonsummer_20, 0.975), quantile(rl_summer_20, 0.975))
+
+lower_ci50 = c(quantile(rl_nonsummer_50, 0.025), quantile(rl_summer_50, 0.025))
+upper_ci50 = c(quantile(rl_nonsummer_50, 0.975), quantile(rl_summer_50, 0.975))
+
+lower_ci75 = c(quantile(rl_nonsummer_75, 0.025), quantile(rl_summer_75, 0.025))
+upper_ci75 = c(quantile(rl_nonsummer_75, 0.975), quantile(rl_summer_75, 0.975))
+
+lower_ci100 = c(quantile(rl_nonsummer_100, 0.025), quantile(rl_summer_100, 0.025))
+upper_ci100 = c(quantile(rl_nonsummer_100, 0.975), quantile(rl_summer_100, 0.975))
+```
+
+```{r}
+temp = return.level(fit8, return.period = c(2, 20, 50, 75, 100), qcov=v)
+temp1 = data.frame(
+  x = rep(1:2, 5),
+  y = c(temp[, 1], temp[, 2], temp[, 3], temp[, 4], temp[, 5]),
+  group = rep(c("2 year Return Period", "20 year Return Period", "50 year Return Period",
+                "75 year Return Period", "100 year Return Period"), each = 2),
+  lower_ci = c(lower_ci2, lower_ci20, lower_ci50, lower_ci75, lower_ci100),
+  upper_ci = c(upper_ci2, upper_ci20, upper_ci50, upper_ci75, upper_ci100)
+)
+
+temp1$group = factor(temp1$group, levels = c("2 year Return Period", "20 year Return Period", 
+                                             "50 year Return Period", "75 year Return Period", 
+                                             "100 year Return Period"))
+
+ggplot(temp1, aes(x = x, y = y, group = group)) +
+  geom_ribbon(aes(ymin = lower_ci, ymax = upper_ci, fill = group), alpha = 0.1) +
+  geom_line(aes(color = group), size = 0.7) +
+  labs(title = "Bootstrapped Conditional Return Level Plot", x = "Summer Index", y = "Wind Speed (m/s)", 
+       fill = "Return Period", color = "Return Period") +
+  scale_x_continuous(breaks = 1:2, labels = c("Non-summer", "Summer")) +
+  theme_minimal() + 
+  theme(
+    legend.position = c(0.82, 0.85),  # x and y coordinates inside plot
+    legend.background = element_rect(fill = "white", color = "black")  # optional styling
+  )
+```
+
+```{r}
+fit8
+```
+
+
 ```{r, warning=FALSE}
 set.seed(123)
 bootstrap_function = function(data, return_period) {
@@ -831,11 +926,71 @@ ggplot(temp1, aes(x = x, y = y, group = group)) +
   )
 ```
 
+Summer Index
+```{r}
+clusters = c(1, 2)
+prop = c(1-mean(wind_speed$summer_index, mean(wind_speed$summer_index)))
+
+cond_rl = function(z, k, fit) {
+  params = fit$results$par
+  if(k != 1) {
+    mu = params["mu0"] + params["mu1"]
+    sigma = exp(params["phi0"] + params["phi1"])
+    xi = params["xi0"] + params["xi1"]
+  } else {
+    mu = params["mu0"]
+    sigma = exp(params["phi0"])
+    xi = params["xi0"]
+  }
+  return(1 - pevd(z, loc = mu, scale = sigma, shape = xi, threshold = threshold[k], type = "PP"))
+}
+
+joint_rl = function(z, fit) {
+  return(sum(prop * sapply(clusters, function(clusters) cond_rl(z, clusters, fit))))
+}
+
+return_period = 100
+uniroot(function(z) joint_rl(z, fit8) - 1/return_period, lower = 0, upper = 100)$root
+```
+
+```{r}
+library(doParallel)
+
+cl <- makeCluster(4)
+registerDoParallel(cl)
+
+summer_joint_rl = function(data, return_period) {
+  sample_data = data[sample(1:nrow(data), replace = TRUE), ]
+  non_summer_wind = sample_data %>% filter(summer_index == 0)
+  summer_wind = sample_data %>% filter(summer_index == 1)
+  
+  prob = 0.95
+  t0 = quantile(non_summer_wind$surface_wind, prob = prob)
+  t1 = quantile(summer_wind$surface_wind, prob = prob)
+  fit = fevd(surface_wind, sample_data, threshold = c(t0, t1-t0), threshold.fun = ~ summer_index,
+            location.fun = ~ summer_index, scale.fun = ~ summer_index, use.phi = TRUE, 
+            shape.fun = ~ summer_index, type="PP")
+  
+  clusters = 1:2
+  return(uniroot(function(z) joint_rl(z, fit) - 1/return_period, lower = 0, upper = 100)$root)
+}
+
+results <- foreach(i = c(2, 20, 50, 75, 100), .combine = rbind, 
+                   .packages = c("dplyr", "extRemes")) %dopar% {
+  replicate(1000, summer_joint_rl(wind_speed, i))
+}
+
+stopCluster(cl)
+```
+
+
+Clustering
 ```{r}
 clusters = c(1, 2, 3, 4, 5, 6, 7)
 prop_0 = 1 - mean(wind_speed$cluster1) - mean(wind_speed$cluster2) - mean(wind_speed$cluster3) - mean(wind_speed$cluster4) - mean(wind_speed$cluster5) - mean(wind_speed$cluster6)
 prop = c(prop_0, mean(wind_speed$cluster1), mean(wind_speed$cluster2), mean(wind_speed$cluster3),
          mean(wind_speed$cluster4), mean(wind_speed$cluster5), mean(wind_speed$cluster6))
+prop
 
 cond_rl = function(z, k, fit) {
   params = fit$results$par
@@ -853,13 +1008,33 @@ joint_rl = function(z, fit) {
   return(sum(prop * sapply(clusters, function(clusters) cond_rl(z, clusters, fit))))
 }
 
-return_period = 100 * 7
-uniroot(function(z) joint_rl(z, fit10) - 1/return_period, lower = 0, upper = 100)$root
+return_period = 100
+uniroot(function(z) joint_rl(z, fit12) - 1/return_period, lower = 0, upper = 100)$root
 ```
+
+```{r}
+hist(cluster0$surface_wind, breaks = 25)
+abline(v = 10, col = "red", lwd = 2, lty = 2)
+hist(cluster1$surface_wind, breaks = 25)
+abline(v = 10, col = "red", lwd = 2, lty = 2)
+hist(cluster2$surface_wind, breaks = 25)
+abline(v = 10, col = "red", lwd = 2, lty = 2)
+hist(cluster3$surface_wind, breaks = 25)
+abline(v = 10, col = "red", lwd = 2, lty = 2)
+hist(cluster4$surface_wind, breaks = 25)
+abline(v = 10, col = "red", lwd = 2, lty = 2)
+hist(cluster5$surface_wind, breaks = 25)
+abline(v = 10, col = "red", lwd = 2, lty = 2)
+hist(cluster6$surface_wind, breaks = 25, xlim = c(10, 16))
+abline(v = 10, col = "red", lwd = 2, lty = 2)
+```
+
 
 ```{r}
 z_grid <- seq(0, 16, length.out = 200)  # choose sensible range
 sur_uncond <- sapply(z_grid, function(z_grid) joint_rl(z_grid, fit10))
+
+fit2
 
 # stationary model survival: if you fitted a stationary GEV 'fit_stat' and extracted mu0,sig0,xi0:
 sur_stat <- 1 - pgev(z_grid, loc = mu0, scale = sig0, shape = xi0)
@@ -867,15 +1042,7 @@ sur_stat <- 1 - pgev(z_grid, loc = mu0, scale = sig0, shape = xi0)
 plot(z_grid, sur_uncond, type='l', log='y', ylim = range(c(sur_uncond, sur_stat), na.rm=TRUE),
      xlab='z', ylab='Survival (log scale)')
 lines(z_grid, sur_stat, lty=2)
-legend('topright', legend=c("Unconditional (mixed)", "Stationary fit"), lty=c(1,2))
-```
-
-```{r}
-#return.level(fit1, return.period = c(2, 20, 50, 100, 500), do.ci=TRUE)
-temp_fit = fevd(surface_wind, wind_speed, threshold = 8.5, type = "PP")
-mu0 = temp_fit$results$par['location']
-sig0 = temp_fit$results$par['scale']
-xi0 = temp_fit$results$par['shape']
+legend('topright', legend=c("Unconditional (mixed)", "Stationary fit"), lty=c(1,1))
 ```
 
 ```{r, warning=FALSE}
@@ -915,7 +1082,7 @@ bootstrap_joint_rl = function(data, return_period) {
   return(uniroot(function(z) joint_rl(z, fit) - 1/return_period, lower = 0, upper = 100)$root)
 }
 
-results <- foreach(i = c(2*7, 20*7, 50*7, 75*7, 100*7), .combine = rbind, 
+results <- foreach(i = c(2, 20, 50, 75, 100), .combine = rbind, 
                    .packages = c("dplyr", "extRemes")) %dopar% {
   replicate(1000, bootstrap_joint_rl(wind_speed, i))
 }
@@ -931,11 +1098,11 @@ lower_ci = c(quantile(temp[1, ], prob = 0.025), quantile(temp[2, ], prob = 0.025
 upper_ci = c(quantile(temp[1, ], prob = 0.975), quantile(temp[2, ], prob = 0.975), 
              quantile(temp[3, ], prob = 0.975), quantile(temp[4, ], prob = 0.975),
              quantile(temp[5, ], prob = 0.975))
-estimate = c(uniroot(function(z) joint_rl(z, fit10) - 1/(2*7), lower = 0, upper = 100)$root,
-             uniroot(function(z) joint_rl(z, fit10) - 1/(20*7), lower = 0, upper = 100)$root,
-             uniroot(function(z) joint_rl(z, fit10) - 1/(50*7), lower = 0, upper = 100)$root,
-             uniroot(function(z) joint_rl(z, fit10) - 1/(75*7), lower = 0, upper = 100)$root,
-             uniroot(function(z) joint_rl(z, fit10) - 1/(100*7), lower = 0, upper = 100)$root)
+estimate = c(uniroot(function(z) joint_rl(z, fit8) - 1/(2), lower = 0, upper = 100)$root,
+             uniroot(function(z) joint_rl(z, fit8) - 1/(20), lower = 0, upper = 100)$root,
+             uniroot(function(z) joint_rl(z, fit8) - 1/(50), lower = 0, upper = 100)$root,
+             uniroot(function(z) joint_rl(z, fit8) - 1/(75), lower = 0, upper = 100)$root,
+             uniroot(function(z) joint_rl(z, fit8) - 1/(100), lower = 0, upper = 100)$root)
 temp_df = data.frame(
   return_period = c(2, 20, 50, 75, 100),
   lower_ci = lower_ci, 
@@ -955,7 +1122,6 @@ ggplot(temp_df, aes(x = return_period, y = estimate)) +
     y = "Wind Speed Return Level (m/s)"
   ) +
   theme_minimal()
-
 ```
 
 ```{r}
